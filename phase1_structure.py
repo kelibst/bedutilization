@@ -183,10 +183,9 @@ def build_daily_data_sheet(wb: Workbook, config: WorkbookConfig):
     for col, h in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=h)
 
-    # Seed row (needed for table creation; will be cleared by VBA)
+    # Seed row (needed for table creation; will be overwritten by VBA on first entry)
     ws.cell(row=2, column=1, value="")
-    # Remaining formula (structured reference)
-    ws.cell(row=2, column=11, value="=[@PrevRemaining]+[@Admissions]-[@Discharges]-[@Deaths]+[@TransfersIn]-[@TransfersOut]")
+    # Remaining is calculated by VBA (not a formula) for reliability
 
     tbl = Table(displayName="tblDaily", ref="A1:L2")
     tbl.tableStyleInfo = TABLE_STYLE

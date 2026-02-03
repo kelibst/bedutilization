@@ -164,6 +164,10 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
         Set targetRow = tbl.ListRows.Add
     End If
 
+    ' Calculate remaining as a VALUE (not formula - more reliable)
+    Dim remaining As Long
+    remaining = prevRemaining + admissions - discharges - deaths + transIn - transOut
+
     With targetRow.Range
         .Cells(1, 1).Value = entryDate
         .Cells(1, 1).NumberFormat = "yyyy-mm-dd"
@@ -176,7 +180,7 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
         .Cells(1, 8).Value = transIn
         .Cells(1, 9).Value = transOut
         .Cells(1, 10).Value = prevRemaining
-        ' Column 11 (Remaining) is a formula - auto-calculated
+        .Cells(1, 11).Value = remaining
         .Cells(1, 12).Value = Now
         .Cells(1, 12).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
@@ -842,16 +846,18 @@ Private Sub UserForm_Initialize()
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
 
+    ' Load age units FIRST (before ward selection triggers cmbWard_Change)
+    cmbAgeUnit.AddItem "Years"
+    cmbAgeUnit.AddItem "Months"
+    cmbAgeUnit.AddItem "Days"
+    cmbAgeUnit.ListIndex = 0
+
+    ' Now load wards (setting ListIndex will fire cmbWard_Change safely)
     Dim i As Long
     For i = 0 To UBound(wardNames)
         cmbWard.AddItem wardNames(i)
     Next i
     If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
-
-    cmbAgeUnit.AddItem "Years"
-    cmbAgeUnit.AddItem "Months"
-    cmbAgeUnit.AddItem "Days"
-    cmbAgeUnit.ListIndex = 0
 
     txtDate.Value = Format(Date, "dd/mm/yyyy")
     txtAge.Value = ""
@@ -982,16 +988,18 @@ Private Sub UserForm_Initialize()
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
 
+    ' Load age units FIRST (before ward triggers any change events)
+    cmbAgeUnit.AddItem "Years"
+    cmbAgeUnit.AddItem "Months"
+    cmbAgeUnit.AddItem "Days"
+    cmbAgeUnit.ListIndex = 0
+
+    ' Now load wards
     Dim i As Long
     For i = 0 To UBound(wardNames)
         cmbWard.AddItem wardNames(i)
     Next i
     If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
-
-    cmbAgeUnit.AddItem "Years"
-    cmbAgeUnit.AddItem "Months"
-    cmbAgeUnit.AddItem "Days"
-    cmbAgeUnit.ListIndex = 0
 
     txtDate.Value = Format(Date, "dd/mm/yyyy")
     optMale.Value = True
