@@ -165,8 +165,10 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
     End If
 
     ' Calculate remaining as a VALUE (not formula - more reliable)
+    ' Formula: Remaining = PrevRemaining + Admissions + TransfersIn - (Discharges + Deaths + TransfersOut) - Deaths<24Hrs
+    ' Deaths and Deaths<24Hrs are SEPARATE counts (not a subset)
     Dim remaining As Long
-    remaining = prevRemaining + admissions - discharges - deaths + transIn - transOut
+    remaining = prevRemaining + admissions + transIn - discharges - deaths - transOut - deathsU24
 
     With targetRow.Range
         .Cells(1, 1).Value = entryDate
@@ -684,6 +686,9 @@ End Sub
 Private Sub txtDeaths_Change()
     CalculateRemaining
 End Sub
+Private Sub txtDeaths24_Change()
+    CalculateRemaining
+End Sub
 Private Sub txtTransIn_Change()
     CalculateRemaining
 End Sub
@@ -694,16 +699,18 @@ End Sub
 Private Sub CalculateRemaining()
     On Error Resume Next
     Dim prev As Long, adm As Long, dis As Long
-    Dim dth As Long, ti As Long, tOut As Long, remVal As Long
+    Dim dth As Long, dth24 As Long, ti As Long, tOut As Long, remVal As Long
 
     prev = CLng(Val(lblPrevRemaining.Caption))
     adm = CLng(Val(txtAdmissions.Value))
     dis = CLng(Val(txtDischarges.Value))
     dth = CLng(Val(txtDeaths.Value))
+    dth24 = CLng(Val(txtDeaths24.Value))
     ti = CLng(Val(txtTransIn.Value))
     tOut = CLng(Val(txtTransOut.Value))
 
-    remVal = prev + adm - dis - dth + ti - tOut
+    ' Formula: Remaining = Prev + Admissions + TransfersIn - (Discharges + Deaths + TransfersOut) - Deaths<24Hrs
+    remVal = prev + adm + ti - dis - dth - tOut - dth24
     lblRemaining.Caption = CStr(remVal)
 
     If remVal < 0 Then

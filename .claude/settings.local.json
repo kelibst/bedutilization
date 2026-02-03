@@ -21,7 +21,8 @@
       "Bash(reg add HKCUSoftwareMicrosoftOffice16.0ExcelSecurity /v AccessVBOM /t REG_DWORD /d 1 /f)",
       "Bash(reg.exe add \"HKCU\\\\Software\\\\Microsoft\\\\Office\\\\16.0\\\\Excel\\\\Security\" /v AccessVBOM /t REG_DWORD /d 1 /f)",
       "Bash(\"C:/Users/kelibpc/AppData/Local/Programs/Python/Python312/python.exe\" -c \"import winreg; key = winreg.OpenKey\\(winreg.HKEY_CURRENT_USER, r''Software\\\\Microsoft\\\\Office\\\\16.0\\\\Excel\\\\Security'', 0, winreg.KEY_SET_VALUE\\); winreg.SetValueEx\\(key, ''AccessVBOM'', 0, winreg.REG_DWORD, 1\\); winreg.CloseKey\\(key\\); print\\(''Success: AccessVBOM set to 1''\\)\")",
-      "Bash(taskkill:*)"
+      "Bash(taskkill:*)",
+      "Bash(\"C:/Users/kelibpc/AppData/Local/Programs/Python/Python312/python.exe\" \"c:/Users/kelibpc/Desktop/projects/bedutilization/build_workbook.py\" --year 2026)"
     ]
   }
 }
