@@ -1199,14 +1199,19 @@ Option Explicit
 
 Private wardCodes As Variant
 Private wardNames As Variant
-Private isLoading As Boolean
 
 Private Sub UserForm_Initialize()
-    isLoading = True
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
 
-    ' Month combo
+    ' Wards
+    Dim i As Long
+    For i = 0 To UBound(wardNames)
+        cmbWard.AddItem wardNames(i)
+    Next i
+    If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
+
+    ' Date defaults (same as Daily)
     cmbMonth.AddItem "JANUARY"
     cmbMonth.AddItem "FEBRUARY"
     cmbMonth.AddItem "MARCH"
@@ -1226,15 +1231,67 @@ Private Sub UserForm_Initialize()
     spnDay.Value = Day(Date)
     txtDay.Value = CStr(Day(Date))
 
-    ' Wards
-    Dim i As Long
-    For i = 0 To UBound(wardNames)
-        cmbWard.AddItem wardNames(i)
-    Next i
-    If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
+    ' Age Units
+    cmbAgeUnit.AddItem "Years"
+    cmbAgeUnit.AddItem "Months"
+    cmbAgeUnit.AddItem "Days"
+    cmbAgeUnit.ListIndex = 0 ' Default Years
 
-    isLoading = False
-    UpdateTotals
+    ' Defaults
+    optMale.Value = True
+    optInsured.Value = True
+
+    lblStatus.Caption = "Ready"
+    txtAge.SetFocus
+End Sub
+
+Private Sub btnSave_Click()
+    ' Validate
+    If cmbWard.ListIndex < 0 Then
+        MsgBox "Select Ward", vbExclamation
+        Exit Sub
+    End If
+    If txtAge.Value = "" Or Not IsNumeric(txtAge.Value) Then
+        MsgBox "Enter valid Age", vbExclamation
+        txtAge.SetFocus
+        Exit Sub
+    End If
+
+    Dim yr As Long
+    yr = GetReportYear()
+    Dim dt As Date
+    dt = DateSerial(yr, cmbMonth.ListIndex + 1, spnDay.Value)
+
+    Dim wc As String
+    wc = wardCodes(cmbWard.ListIndex)
+    
+    Dim age As Long
+    age = CLng(txtAge.Value)
+    Dim unit As String
+    unit = cmbAgeUnit.Value
+    
+    Dim sex As String
+    If optMale.Value Then sex = "M" Else sex = "F"
+    
+    Dim nhis As String
+    If optInsured.Value Then nhis = "Insured" Else nhis = "Non-Insured"
+
+    ' Save
+    Application.Run "SaveAdmission", dt, wc, "-", "Age Entry", age, unit, sex, nhis
+
+    ' Post-Save Reset
+    lblStatus.Caption = "Saved: " & age & " " & unit & " (" & sex & ", " & nhis & ")"
+    lblStatus.ForeColor = &H8000& ' Green
+
+    txtAge.Value = ""
+    cmbAgeUnit.ListIndex = 0 ' Reset to Years
+    ' Keep persistent selections (Ward, Date, Sex, NHIS)
+    
+    txtAge.SetFocus
+End Sub
+
+Private Sub btnClose_Click()
+    Unload Me
 End Sub
 
 Private Sub spnDay_Change()
@@ -1247,132 +1304,6 @@ Private Sub txtDay_Change()
         v = Val(txtDay.Value)
         If v >= 1 And v <= 31 Then spnDay.Value = v
     End If
-End Sub
-
-Private Sub UpdateTotals()
-    Dim i As Long
-    Dim m As Long, f As Long, ins As Long, non As Long
-    Dim tm As Long, tf As Long, tins As Long, tnon As Long
-    
-    tm = 0: tf = 0: tins = 0: tnon = 0
-    
-    On Error Resume Next
-    For i = 0 To 11
-        m = Val(Me.Controls("txtM_" & i).Value)
-        f = Val(Me.Controls("txtF_" & i).Value)
-        ins = Val(Me.Controls("txtIns_" & i).Value)
-        non = Val(Me.Controls("txtNon_" & i).Value)
-        
-        tm = tm + m
-        tf = tf + f
-        tins = tins + ins
-        tnon = tnon + non
-    Next i
-    
-    lblTotalVal.Caption = CStr(tm + tf)
-    
-    If (tm + tf) = (tins + tnon) Then
-        lblCheck.Caption = "Check (M+F = Ins+Non): OK"
-        lblCheck.ForeColor = &H8000& ' Green
-    Else
-        lblCheck.Caption = "Check (M+F = Ins+Non): MISMATCH"
-        lblCheck.ForeColor = &HFF& ' Red
-    End If
-End Sub
-
-Private Sub btnSave_Click()
-    UpdateTotals
-    If lblCheck.Caption Like "*MISMATCH*" Then
-        If MsgBox("Totals mismatch (Male+Female <> Insured+Non-Insured). Save anyway?", vbYesNo + vbExclamation) = vbNo Then Exit Sub
-    End If
-    
-    If cmbWard.ListIndex < 0 Then
-        MsgBox "Select Ward", vbExclamation
-        Exit Sub
-    End If
-    
-    Dim yr As Long
-    yr = GetReportYear()
-    Dim dt As Date
-    dt = DateSerial(yr, cmbMonth.ListIndex + 1, spnDay.Value)
-    
-    Dim wc As String
-    wc = wardCodes(cmbWard.ListIndex)
-    
-    Dim i As Long, j As Long
-    Dim m As Long, f As Long, ins As Long, non As Long
-    
-    For i = 0 To 11
-        m = Val(Me.Controls("txtM_" & i).Value)
-        f = Val(Me.Controls("txtF_" & i).Value)
-        ins = Val(Me.Controls("txtIns_" & i).Value)
-        non = Val(Me.Controls("txtNon_" & i).Value)
-        
-        If (m + f) > 0 Then
-            Dim malesToProcess As Long: malesToProcess = m
-            Dim femalesToProcess As Long: femalesToProcess = f
-            Dim insRemaining As Long: insRemaining = ins
-            
-            ' Process Males
-            For j = 1 To malesToProcess
-                Dim nhis As String
-                If insRemaining > 0 Then
-                    nhis = "Insured"
-                    insRemaining = insRemaining - 1
-                Else
-                    nhis = "Non-Insured"
-                End If
-                SaveSingleAdmission dt, wc, i, "M", nhis
-            Next j
-            
-            ' Process Females
-            For j = 1 To femalesToProcess
-                Dim nhisF As String
-                If insRemaining > 0 Then
-                    nhisF = "Insured"
-                    insRemaining = insRemaining - 1
-                Else
-                    nhisF = "Non-Insured"
-                End If
-                SaveSingleAdmission dt, wc, i, "F", nhisF
-            Next j
-        End If
-    Next i
-    
-     MsgBox "Entries Saved!", vbInformation
-     For i = 0 To 11
-        Me.Controls("txtM_" & i).Value = "0"
-        Me.Controls("txtF_" & i).Value = "0"
-        Me.Controls("txtIns_" & i).Value = "0"
-        Me.Controls("txtNon_" & i).Value = "0"
-     Next i
-     UpdateTotals
-End Sub
-
-Private Sub btnCancel_Click()
-    Unload Me
-End Sub
-
-Private Sub SaveSingleAdmission(dt As Date, wc As String, ageGrpIdx As Long, sex As String, nhis As String)
-    Dim age As Long
-    Dim unit As String
-    
-    Select Case ageGrpIdx
-        Case 0: age = 14: unit = "Days"
-        Case 1: age = 6: unit = "Months"
-        Case 2: age = 2: unit = "Years"
-        Case 3: age = 7: unit = "Years"
-        Case 4: age = 12: unit = "Years"
-        Case 5: age = 16: unit = "Years"
-        Case 6: age = 18: unit = "Years"
-        Case 7: age = 27: unit = "Years"
-        Case 8: age = 42: unit = "Years"
-        Case 9: age = 55: unit = "Years"
-        Case 10: age = 65: unit = "Years"
-        Case 11: age = 75: unit = "Years"
-    End Select
-    
-    Application.Run "SaveAdmission", dt, wc, "BULK", "Bulk Entry", age, unit, sex, nhis
 End Sub
 '''
 
@@ -1694,84 +1625,66 @@ def create_admission_form(vbproj):
 
 
 def create_ages_entry_form(vbproj):
-    """Create the frmAgesEntry UserForm."""
     form = vbproj.VBComponents.Add(3)
     form.Name = "frmAgesEntry"
-    form.Properties("Caption").Value = "Ages Group Admission Entry"
-    form.Properties("Width").Value = 480
-    form.Properties("Height").Value = 550
+    form.Properties("Caption").Value = "Speed Ages Entry"
+    form.Properties("Width").Value = 350
+    form.Properties("Height").Value = 380
 
     d = form.Designer
     y = 12
 
+    # Ward
+    _add_label(d, "lblWard", "Ward:", 12, y, 60, 18)
+    _add_combobox(d, "cmbWard", 100, y, 200, 22)
+    y += 32
+
     # Date
-    _add_label(d, "lblDateLabel", "Date:", 12, y, 40, 18)
-    cmb_month = _add_combobox(d, "cmbMonth", 55, y, 100, 20)
-    _add_label(d, "lblDayLabel", "Day:", 160, y, 30, 18)
-    txt_day = _add_textbox(d, "txtDay", 195, y, 35, 20)
-    # SpinButton for day
-    spn = d.Controls.Add("Forms.SpinButton.1")
-    spn.Name = "spnDay"
-    spn.Left = 232
-    spn.Top = y
-    spn.Width = 18
-    spn.Height = 20
+    _add_label(d, "lblDate", "Date:", 12, y, 60, 18)
+    _add_combobox(d, "cmbMonth", 80, y, 100, 22)
+    _add_textbox(d, "txtDay", 190, y, 30, 20)
+    spn = _add_spinner(d, "spnDay", 220, y, 15, 20)
     spn.Min = 1
     spn.Max = 31
+    y += 32
 
+    # Divider
+    _add_label(d, "lblSep1", "", 12, y, 310, 1).BackColor = 0xC0C0C0
+    y += 12
+
+    # Age Entry Area
+    _add_label(d, "lblAge", "AGE:", 12, y, 60, 20).Font.Bold = True
+    _add_textbox(d, "txtAge", 80, y, 60, 24).Font.Size = 12
+    
+    _add_label(d, "lblUnit", "Unit:", 150, y+4, 40, 18)
+    _add_combobox(d, "cmbAgeUnit", 195, y, 100, 22)
+    y += 38
+
+    # Sex
+    _add_label(d, "lblSex", "Sex:", 12, y, 60, 18)
+    _add_optionbutton(d, "optMale", "Male", 80, y, 60, 20)
+    _add_optionbutton(d, "optFemale", "Female", 150, y, 70, 20)
     y += 28
 
-    # Ward
-    _add_label(d, "lblWardLabel", "Ward:", 12, y, 60, 18)
-    _add_combobox(d, "cmbWard", 80, y, 180, 22)
-    y += 28
+    # Insurance
+    _add_label(d, "lblIns", "Health Ins:", 12, y, 65, 18)
+    _add_optionbutton(d, "optInsured", "Insured", 80, y, 70, 20)
+    _add_optionbutton(d, "optNonInsured", "Non-Insured", 160, y, 100, 20)
+    y += 32
 
-    # Headers for grid
-    y_start = y
-    _add_label(d, "lblHdrAge", "Age Group", 12, y, 80, 18).Font.Bold = True
-    _add_label(d, "lblHdrM", "Male", 100, y, 50, 18).Font.Bold = True
-    _add_label(d, "lblHdrF", "Female", 160, y, 50, 18).Font.Bold = True
-    _add_label(d, "lblHdrIns", "Insured", 220, y, 60, 18).Font.Bold = True
-    _add_label(d, "lblHdrNon", "Non-Ins", 290, y, 60, 18).Font.Bold = True
-    y += 20
-
-    # Grid rows (generated dynamically based on config, but hardcoded here for simplicity)
-    # 0-28 Days, 1-11 Months, 1-4 Years, etc.
-    # We will create simplified inputs: just generic counts for M/F and Ins/Non per age group OR 
-    # to be cleaner: loop through age groups.
-    
-    # Actually, to make it fitting, we will use a ListBox-like approach or just a few key groups?
-    # No, user wants ALL age groups. 
-    # Let's create control arrays by naming convention: txtM_0, txtF_0, txtIns_0, txtNon_0 where 0 is index
-    
-    age_groups = [
-        "0-28 Days", "1-11 Mnths", "1-4 Yrs", "5-9 Yrs", "10-14 Yrs", 
-        "15-17 Yrs", "18-19 Yrs", "20-34 Yrs", "35-49 Yrs", "50-59 Yrs", 
-        "60-69 Yrs", "70+ Yrs"
-    ]
-    
-    for i, ag in enumerate(age_groups):
-        _add_label(d, f"lblAg{i}", ag, 12, y, 80, 18)
-        _add_textbox(d, f"txtM_{i}", 100, y, 50, 18).Value = "0"
-        _add_textbox(d, f"txtF_{i}", 160, y, 50, 18).Value = "0"
-        _add_textbox(d, f"txtIns_{i}", 220, y, 60, 18).Value = "0"
-        _add_textbox(d, f"txtNon_{i}", 290, y, 60, 18).Value = "0"
-        y += 20
-
-    y += 10
-    _add_label(d, "lblTotal", "Total Admissions:", 12, y, 120, 18).Font.Bold = True
-    _add_label(d, "lblTotalVal", "0", 140, y, 60, 18).Font.Bold = True
-    
-    _add_label(d, "lblCheck", "Check (M+F = Ins+Non): OK", 220, y, 200, 18).ForeColor = 0x008000
-    y += 28
+    # Status
+    lbl = _add_label(d, "lblStatus", "Ready", 12, y, 310, 20)
+    lbl.Font.Bold = True
+    lbl.ForeColor = 0x808080 # Gray
+    y += 24
 
     # Buttons
-    _add_button(d, "btnSave", "Save Entries", 12, y, 120, 28)
-    _add_button(d, "btnCancel", "Close", 140, y, 100, 28)
+    btnSave = _add_button(d, "btnSave", "Save Entry (Enter)", 12, y, 140, 30)
+    btnSave.Default = True
+    _add_button(d, "btnClose", "Close", 160, y, 100, 30)
 
-    # Inject code
+    # Inject
     form.CodeModule.AddFromString(VBA_FRM_AGES_ENTRY_CODE)
-
 
 
 def create_death_form(vbproj):
@@ -1894,6 +1807,16 @@ def _add_optionbutton(designer, name, caption, left, top, width, height):
     ctrl = designer.Controls.Add("Forms.OptionButton.1")
     ctrl.Name = name
     ctrl.Caption = caption
+    ctrl.Left = left
+    ctrl.Top = top
+    ctrl.Width = width
+    ctrl.Height = height
+    return ctrl
+
+
+def _add_spinner(designer, name, left, top, width, height):
+    ctrl = designer.Controls.Add("Forms.SpinButton.1")
+    ctrl.Name = name
     ctrl.Left = left
     ctrl.Top = top
     ctrl.Width = width
