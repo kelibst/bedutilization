@@ -133,7 +133,7 @@ End Function
 
 Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
     admissions As Long, discharges As Long, deaths As Long, _
-    deathsU24 As Long, transIn As Long, transOut As Long)
+    deathsU24 As Long, transIn As Long, transOut As Long, malariaCases As Long)
 
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Sheets("DailyData")
@@ -183,8 +183,9 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
         .Cells(1, 9).Value = transOut
         .Cells(1, 10).Value = prevRemaining
         .Cells(1, 11).Value = remaining
-        .Cells(1, 12).Value = Now
-        .Cells(1, 12).NumberFormat = "yyyy-mm-dd hh:mm"
+        .Cells(1, 12).Value = malariaCases
+        .Cells(1, 13).Value = Now
+        .Cells(1, 13).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
 End Sub
 
@@ -478,9 +479,76 @@ cleanup2:
     Application.ScreenUpdating = True
 End Sub
 
+Public Sub RefreshNonInsuredReport()
+    Application.ScreenUpdating = False
+    On Error GoTo cleanup3
+
+    Dim wsRep As Worksheet
+    Set wsRep = ThisWorkbook.Sheets("Non-Insured Report")
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    ' Clear old data (keep row 1-2 headers)
+    If wsRep.UsedRange.Rows.Count > 2 Then
+        wsRep.Range(wsRep.Cells(3, 1), wsRep.Cells(wsRep.UsedRange.Rows.Count + 2, 10)).ClearContents
+    End If
+
+    ' Check if table has real data
+    If tbl.ListRows.Count < 1 Then
+        GoTo cleanup3
+    End If
+    If tbl.ListRows.Count = 1 Then
+        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
+            GoTo cleanup3
+        End If
+    End If
+
+    Dim i As Long
+    Dim r As Long
+    r = 3
+    Dim sn As Long
+    sn = 0
+    
+    For i = 1 To tbl.ListRows.Count
+        Dim nhis As String
+        nhis = Trim(CStr(tbl.ListRows(i).Range(1, 10).Value))
+        
+        If UCase(nhis) = "NON-INSURED" Then
+            sn = sn + 1
+            wsRep.Cells(r, 1).Value = sn
+            wsRep.Cells(r, 2).Value = tbl.ListRows(i).Range(1, 2).Value
+            wsRep.Cells(r, 2).NumberFormat = "dd/mm/yyyy"
+            
+            Dim dt As Variant
+            dt = tbl.ListRows(i).Range(1, 2).Value
+            If IsDate(dt) Then
+                wsRep.Cells(r, 3).Value = Format(dt, "mmmm")
+            End If
+            
+            wsRep.Cells(r, 4).Value = tbl.ListRows(i).Range(1, 3).Value
+            wsRep.Cells(r, 5).Value = tbl.ListRows(i).Range(1, 4).Value
+            wsRep.Cells(r, 6).Value = tbl.ListRows(i).Range(1, 6).Value
+            wsRep.Cells(r, 7).Value = tbl.ListRows(i).Range(1, 7).Value & " " & tbl.ListRows(i).Range(1, 9).Value
+            wsRep.Cells(r, 8).Value = tbl.ListRows(i).Range(1, 8).Value
+            wsRep.Cells(r, 9).Value = "" 
+            wsRep.Cells(r, 10).Value = nhis
+            
+            r = r + 1
+        End If
+    Next i
+    
+    If sn = 0 Then
+        wsRep.Cells(3, 1).Value = "(No non-insured patients found)"
+    End If
+
+cleanup3:
+    Application.ScreenUpdating = True
+End Sub
+
 Public Sub RefreshAllReports()
     RefreshDeathsReport
     RefreshCODSummary
+    RefreshNonInsuredReport
     MsgBox "All reports have been refreshed.", vbInformation, "Reports Updated"
 End Sub
 '''
@@ -498,6 +566,10 @@ End Sub
 
 Public Sub ShowDeath()
     frmDeath.Show
+End Sub
+
+Public Sub ShowAgesEntry()
+    frmAgesEntry.Show
 End Sub
 
 Public Sub ShowRefreshReports()
@@ -579,19 +651,42 @@ Option Explicit
 
 Private wardCodes As Variant
 Private wardNames As Variant
+Private isDirty As Boolean  ' Track if data has been modified
+Private isLoading As Boolean  ' Prevent events during load
 
 Private Sub UserForm_Initialize()
+    isLoading = True
+    isDirty = False
+
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
+
+    ' Populate month combo
+    cmbMonth.AddItem "JANUARY"
+    cmbMonth.AddItem "FEBRUARY"
+    cmbMonth.AddItem "MARCH"
+    cmbMonth.AddItem "APRIL"
+    cmbMonth.AddItem "MAY"
+    cmbMonth.AddItem "JUNE"
+    cmbMonth.AddItem "JULY"
+    cmbMonth.AddItem "AUGUST"
+    cmbMonth.AddItem "SEPTEMBER"
+    cmbMonth.AddItem "OCTOBER"
+    cmbMonth.AddItem "NOVEMBER"
+    cmbMonth.AddItem "DECEMBER"
+    cmbMonth.ListIndex = Month(Date) - 1
+
+    ' Set day spinner (1-31)
+    spnDay.Min = 1
+    spnDay.Max = 31
+    spnDay.Value = Day(Date)
+    txtDay.Value = CStr(Day(Date))
 
     ' Populate ward combo
     Dim i As Long
     For i = 0 To UBound(wardNames)
         cmbWard.AddItem wardNames(i)
     Next i
-
-    ' Default date to today
-    txtDate.Value = Format(Date, "dd/mm/yyyy")
 
     ' Select first ward
     If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
@@ -603,19 +698,75 @@ Private Sub UserForm_Initialize()
     txtDeaths24.Value = "0"
     txtTransIn.Value = "0"
     txtTransOut.Value = "0"
+    txtMalaria.Value = "0"
 
+    isLoading = False
     UpdatePrevRemaining
+    CheckExistingEntry
 End Sub
 
 Private Sub cmbWard_Change()
+    If isLoading Then Exit Sub
+
+    ' Auto-save if data was modified before changing ward
+    If isDirty Then
+        If MsgBox("Save changes for current ward before switching?", vbYesNo + vbQuestion) = vbYes Then
+            SaveCurrentEntry
+        End If
+        isDirty = False
+    End If
+
     UpdatePrevRemaining
     CheckExistingEntry
 End Sub
 
-Private Sub txtDate_AfterUpdate()
+Private Sub cmbMonth_Change()
+    If isLoading Then Exit Sub
+    UpdateDateFromControls
     UpdatePrevRemaining
     CheckExistingEntry
 End Sub
+
+Private Sub spnDay_Change()
+    If isLoading Then Exit Sub
+    txtDay.Value = CStr(spnDay.Value)
+    UpdateDateFromControls
+    UpdatePrevRemaining
+    CheckExistingEntry
+End Sub
+
+Private Sub txtDay_Change()
+    If isLoading Then Exit Sub
+    On Error Resume Next
+    Dim d As Long
+    d = CLng(Val(txtDay.Value))
+    If d >= 1 And d <= 31 Then
+        spnDay.Value = d
+    End If
+End Sub
+
+Private Sub UpdateDateFromControls()
+    ' This just updates the internal date tracking
+    ' The actual date is now derived from cmbMonth and spnDay
+End Sub
+
+Private Function GetSelectedDate() As Date
+    On Error GoTo badDate
+    Dim yr As Long, mo As Long, dy As Long
+    yr = GetReportYear()
+    mo = cmbMonth.ListIndex + 1
+    dy = spnDay.Value
+
+    ' Validate day for the month
+    Dim maxDay As Long
+    maxDay = Day(DateSerial(yr, mo + 1, 0))
+    If dy > maxDay Then dy = maxDay
+
+    GetSelectedDate = DateSerial(yr, mo, dy)
+    Exit Function
+badDate:
+    GetSelectedDate = Date
+End Function
 
 Private Sub UpdatePrevRemaining()
     On Error Resume Next
@@ -625,8 +776,7 @@ Private Sub UpdatePrevRemaining()
     wc = wardCodes(cmbWard.ListIndex)
 
     Dim entryDate As Date
-    entryDate = ParseDate(txtDate.Value)
-    If entryDate = #1/1/1900# Then Exit Sub
+    entryDate = GetSelectedDate()
 
     Dim prevRem As Long
     prevRem = GetLastRemainingForWard(wc, entryDate)
@@ -647,12 +797,12 @@ Private Sub CheckExistingEntry()
     wc = wardCodes(cmbWard.ListIndex)
 
     Dim entryDate As Date
-    entryDate = ParseDate(txtDate.Value)
-    If entryDate = #1/1/1900# Then Exit Sub
+    entryDate = GetSelectedDate()
 
     Dim existRow As Long
     existRow = CheckDuplicateDaily(entryDate, wc)
 
+    isLoading = True  ' Prevent dirty flag while loading
     If existRow > 0 Then
         ' Load existing values
         Dim tbl As ListObject
@@ -663,7 +813,8 @@ Private Sub CheckExistingEntry()
         txtDeaths24.Value = CStr(tbl.ListRows(existRow).Range(1, 7).Value)
         txtTransIn.Value = CStr(tbl.ListRows(existRow).Range(1, 8).Value)
         txtTransOut.Value = CStr(tbl.ListRows(existRow).Range(1, 9).Value)
-        lblStatus.Caption = "* Existing entry loaded - will update on save"
+        txtMalaria.Value = CStr(tbl.ListRows(existRow).Range(1, 12).Value)
+        lblStatus.Caption = "* Existing entry loaded"
         lblStatus.ForeColor = RGB(200, 100, 0)
     Else
         txtAdmissions.Value = "0"
@@ -672,28 +823,69 @@ Private Sub CheckExistingEntry()
         txtDeaths24.Value = "0"
         txtTransIn.Value = "0"
         txtTransOut.Value = "0"
-        lblStatus.Caption = ""
+        txtMalaria.Value = "0"
+        lblStatus.Caption = "New entry"
+        lblStatus.ForeColor = RGB(100, 100, 100)
     End If
+    isLoading = False
+    isDirty = False
     CalculateRemaining
 End Sub
 
 Private Sub txtAdmissions_Change()
+    If Not isLoading Then isDirty = True
     CalculateRemaining
 End Sub
+Private Sub txtAdmissions_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    SaveCurrentEntry
+End Sub
+
 Private Sub txtDischarges_Change()
+    If Not isLoading Then isDirty = True
     CalculateRemaining
 End Sub
+Private Sub txtDischarges_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    SaveCurrentEntry
+End Sub
+
 Private Sub txtDeaths_Change()
+    If Not isLoading Then isDirty = True
     CalculateRemaining
 End Sub
+Private Sub txtDeaths_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    SaveCurrentEntry
+End Sub
+
 Private Sub txtDeaths24_Change()
+    If Not isLoading Then isDirty = True
+    ' Deaths24 doesn't affect Remaining, but trigger Calc anyway
     CalculateRemaining
 End Sub
+Private Sub txtDeaths24_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    SaveCurrentEntry
+End Sub
+
 Private Sub txtTransIn_Change()
+    If Not isLoading Then isDirty = True
     CalculateRemaining
 End Sub
+Private Sub txtTransIn_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    SaveCurrentEntry
+End Sub
+
 Private Sub txtTransOut_Change()
+    If Not isLoading Then isDirty = True
     CalculateRemaining
+End Sub
+Private Sub txtTransOut_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    SaveCurrentEntry
+End Sub
+
+Private Sub txtMalaria_Change()
+    If Not isLoading Then isDirty = True
+End Sub
+Private Sub txtMalaria_Exit(ByVal Cancel As MSForms.ReturnBoolean)
+    SaveCurrentEntry
 End Sub
 
 Private Sub CalculateRemaining()
@@ -721,57 +913,92 @@ Private Sub CalculateRemaining()
 End Sub
 
 Private Sub btnPrevDay_Click()
-    Dim d As Date
-    d = ParseDate(txtDate.Value)
-    If d > #1/1/1900# Then
-        d = d - 1
-        txtDate.Value = Format(d, "dd/mm/yyyy")
-        UpdatePrevRemaining
-        CheckExistingEntry
+    ' Auto-save if dirty
+    If isDirty Then SaveCurrentEntry
+
+    isLoading = True
+    If spnDay.Value > 1 Then
+        spnDay.Value = spnDay.Value - 1
+    ElseIf cmbMonth.ListIndex > 0 Then
+        cmbMonth.ListIndex = cmbMonth.ListIndex - 1
+        spnDay.Value = Day(DateSerial(GetReportYear(), cmbMonth.ListIndex + 2, 0))
     End If
+    txtDay.Value = CStr(spnDay.Value)
+    isLoading = False
+    UpdatePrevRemaining
+    CheckExistingEntry
 End Sub
 
 Private Sub btnNextDay_Click()
-    Dim d As Date
-    d = ParseDate(txtDate.Value)
-    If d > #1/1/1900# Then
-        d = d + 1
-        txtDate.Value = Format(d, "dd/mm/yyyy")
-        UpdatePrevRemaining
-        CheckExistingEntry
+    ' Auto-save if dirty
+    If isDirty Then SaveCurrentEntry
+
+    isLoading = True
+    Dim maxDay As Long
+    maxDay = Day(DateSerial(GetReportYear(), cmbMonth.ListIndex + 2, 0))
+    If spnDay.Value < maxDay Then
+        spnDay.Value = spnDay.Value + 1
+    ElseIf cmbMonth.ListIndex < 11 Then
+        cmbMonth.ListIndex = cmbMonth.ListIndex + 1
+        spnDay.Value = 1
     End If
+    txtDay.Value = CStr(spnDay.Value)
+    isLoading = False
+    UpdatePrevRemaining
+    CheckExistingEntry
 End Sub
 
 Private Sub btnToday_Click()
-    txtDate.Value = Format(Date, "dd/mm/yyyy")
+    ' Auto-save if dirty
+    If isDirty Then SaveCurrentEntry
+
+    isLoading = True
+    cmbMonth.ListIndex = Month(Date) - 1
+    spnDay.Value = Day(Date)
+    txtDay.Value = CStr(spnDay.Value)
+    isLoading = False
     UpdatePrevRemaining
     CheckExistingEntry
 End Sub
 
 Private Sub btnSaveNext_Click()
     If SaveCurrentEntry() Then
-        ' Move to next ward
-        If cmbWard.ListIndex < cmbWard.ListCount - 1 Then
-            cmbWard.ListIndex = cmbWard.ListIndex + 1
+        isDirty = False
+        ' Move to next ward - preserve current ward index first
+        Dim nextIdx As Long
+        nextIdx = cmbWard.ListIndex + 1
+        If nextIdx < cmbWard.ListCount Then
+            isLoading = True  ' Prevent auto-save prompt
+            cmbWard.ListIndex = nextIdx
+            isLoading = False
+            UpdatePrevRemaining
+            CheckExistingEntry
         Else
             MsgBox "All wards completed for this date!", vbInformation
-            cmbWard.ListIndex = 0
+            ' Optionally advance to next day
+            btnNextDay_Click
         End If
     End If
 End Sub
 
 Private Sub btnSaveNextDay_Click()
     If SaveCurrentEntry() Then
+        isDirty = False
         ' Advance date to next day and reset to first ward
-        Dim d As Date
-        d = ParseDate(txtDate.Value)
-        If d > #1/1/1900# Then
-            d = d + 1
-            txtDate.Value = Format(d, "dd/mm/yyyy")
-            cmbWard.ListIndex = 0
-            UpdatePrevRemaining
-            CheckExistingEntry
+        isLoading = True
+        Dim maxDay As Long
+        maxDay = Day(DateSerial(GetReportYear(), cmbMonth.ListIndex + 2, 0))
+        If spnDay.Value < maxDay Then
+            spnDay.Value = spnDay.Value + 1
+        ElseIf cmbMonth.ListIndex < 11 Then
+            cmbMonth.ListIndex = cmbMonth.ListIndex + 1
+            spnDay.Value = 1
         End If
+        txtDay.Value = CStr(spnDay.Value)
+        ' cmbWard.ListIndex = 0  <-- Removed to persist selection
+        isLoading = False
+        UpdatePrevRemaining
+        CheckExistingEntry
     End If
 End Sub
 
@@ -795,20 +1022,17 @@ Private Function SaveCurrentEntry() As Boolean
     End If
 
     Dim entryDate As Date
-    entryDate = ParseDate(txtDate.Value)
-    If entryDate = #1/1/1900# Then
-        MsgBox "Please enter a valid date (dd/mm/yyyy).", vbExclamation
-        Exit Function
-    End If
+    entryDate = GetSelectedDate()
 
     Dim adm As Long, dis As Long, dth As Long
-    Dim d24 As Long, ti As Long, tOut As Long
+    Dim d24 As Long, ti As Long, tOut As Long, mal As Long
     adm = CLng(Val(txtAdmissions.Value))
     dis = CLng(Val(txtDischarges.Value))
     dth = CLng(Val(txtDeaths.Value))
     d24 = CLng(Val(txtDeaths24.Value))
     ti = CLng(Val(txtTransIn.Value))
     tOut = CLng(Val(txtTransOut.Value))
+    mal = CLng(Val(txtMalaria.Value))
 
     If d24 > dth Then
         MsgBox "Deaths <24Hrs cannot exceed total Deaths.", vbExclamation
@@ -818,28 +1042,13 @@ Private Function SaveCurrentEntry() As Boolean
     Dim wc As String
     wc = wardCodes(cmbWard.ListIndex)
 
-    SaveDailyEntry entryDate, wc, adm, dis, dth, d24, ti, tOut
+    SaveDailyEntry entryDate, wc, adm, dis, dth, d24, ti, tOut, mal
 
-    lblStatus.Caption = "Saved: " & wardNames(cmbWard.ListIndex) & " - " & txtDate.Value
+    lblStatus.Caption = "Saved: " & wardNames(cmbWard.ListIndex) & " - " & Format(entryDate, "dd/mm/yyyy")
     lblStatus.ForeColor = RGB(0, 128, 0)
+    isDirty = False
 
     SaveCurrentEntry = True
-End Function
-
-Private Function ParseDate(dateStr As String) As Date
-    On Error GoTo badDate
-    ' Try dd/mm/yyyy format
-    Dim parts() As String
-    parts = Split(dateStr, "/")
-    If UBound(parts) = 2 Then
-        ParseDate = DateSerial(CLng(parts(2)), CLng(parts(1)), CLng(parts(0)))
-        Exit Function
-    End If
-    ' Try other formats
-    ParseDate = CDate(dateStr)
-    Exit Function
-badDate:
-    ParseDate = #1/1/1900#
 End Function
 '''
 
@@ -983,6 +1192,188 @@ Private Function ParseDateAdm(dateStr As String) As Date
 badDate:
     ParseDateAdm = #1/1/1900#
 End Function
+'''
+
+VBA_FRM_AGES_ENTRY_CODE = '''
+Option Explicit
+
+Private wardCodes As Variant
+Private wardNames As Variant
+Private isLoading As Boolean
+
+Private Sub UserForm_Initialize()
+    isLoading = True
+    wardCodes = GetWardCodes()
+    wardNames = GetWardNames()
+
+    ' Month combo
+    cmbMonth.AddItem "JANUARY"
+    cmbMonth.AddItem "FEBRUARY"
+    cmbMonth.AddItem "MARCH"
+    cmbMonth.AddItem "APRIL"
+    cmbMonth.AddItem "MAY"
+    cmbMonth.AddItem "JUNE"
+    cmbMonth.AddItem "JULY"
+    cmbMonth.AddItem "AUGUST"
+    cmbMonth.AddItem "SEPTEMBER"
+    cmbMonth.AddItem "OCTOBER"
+    cmbMonth.AddItem "NOVEMBER"
+    cmbMonth.AddItem "DECEMBER"
+    cmbMonth.ListIndex = Month(Date) - 1
+
+    spnDay.Min = 1
+    spnDay.Max = 31
+    spnDay.Value = Day(Date)
+    txtDay.Value = CStr(Day(Date))
+
+    ' Wards
+    Dim i As Long
+    For i = 0 To UBound(wardNames)
+        cmbWard.AddItem wardNames(i)
+    Next i
+    If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
+
+    isLoading = False
+    UpdateTotals
+End Sub
+
+Private Sub spnDay_Change()
+    txtDay.Value = CStr(spnDay.Value)
+End Sub
+
+Private Sub txtDay_Change()
+    If IsNumeric(txtDay.Value) Then
+        Dim v As Long
+        v = Val(txtDay.Value)
+        If v >= 1 And v <= 31 Then spnDay.Value = v
+    End If
+End Sub
+
+Private Sub UpdateTotals()
+    Dim i As Long
+    Dim m As Long, f As Long, ins As Long, non As Long
+    Dim tm As Long, tf As Long, tins As Long, tnon As Long
+    
+    tm = 0: tf = 0: tins = 0: tnon = 0
+    
+    On Error Resume Next
+    For i = 0 To 11
+        m = Val(Me.Controls("txtM_" & i).Value)
+        f = Val(Me.Controls("txtF_" & i).Value)
+        ins = Val(Me.Controls("txtIns_" & i).Value)
+        non = Val(Me.Controls("txtNon_" & i).Value)
+        
+        tm = tm + m
+        tf = tf + f
+        tins = tins + ins
+        tnon = tnon + non
+    Next i
+    
+    lblTotalVal.Caption = CStr(tm + tf)
+    
+    If (tm + tf) = (tins + tnon) Then
+        lblCheck.Caption = "Check (M+F = Ins+Non): OK"
+        lblCheck.ForeColor = &H8000& ' Green
+    Else
+        lblCheck.Caption = "Check (M+F = Ins+Non): MISMATCH"
+        lblCheck.ForeColor = &HFF& ' Red
+    End If
+End Sub
+
+Private Sub btnSave_Click()
+    UpdateTotals
+    If lblCheck.Caption Like "*MISMATCH*" Then
+        If MsgBox("Totals mismatch (Male+Female <> Insured+Non-Insured). Save anyway?", vbYesNo + vbExclamation) = vbNo Then Exit Sub
+    End If
+    
+    If cmbWard.ListIndex < 0 Then
+        MsgBox "Select Ward", vbExclamation
+        Exit Sub
+    End If
+    
+    Dim yr As Long
+    yr = GetReportYear()
+    Dim dt As Date
+    dt = DateSerial(yr, cmbMonth.ListIndex + 1, spnDay.Value)
+    
+    Dim wc As String
+    wc = wardCodes(cmbWard.ListIndex)
+    
+    Dim i As Long, j As Long
+    Dim m As Long, f As Long, ins As Long, non As Long
+    
+    For i = 0 To 11
+        m = Val(Me.Controls("txtM_" & i).Value)
+        f = Val(Me.Controls("txtF_" & i).Value)
+        ins = Val(Me.Controls("txtIns_" & i).Value)
+        non = Val(Me.Controls("txtNon_" & i).Value)
+        
+        If (m + f) > 0 Then
+            Dim malesToProcess As Long: malesToProcess = m
+            Dim femalesToProcess As Long: femalesToProcess = f
+            Dim insRemaining As Long: insRemaining = ins
+            
+            ' Process Males
+            For j = 1 To malesToProcess
+                Dim nhis As String
+                If insRemaining > 0 Then
+                    nhis = "Insured"
+                    insRemaining = insRemaining - 1
+                Else
+                    nhis = "Non-Insured"
+                End If
+                SaveSingleAdmission dt, wc, i, "M", nhis
+            Next j
+            
+            ' Process Females
+            For j = 1 To femalesToProcess
+                Dim nhisF As String
+                If insRemaining > 0 Then
+                    nhisF = "Insured"
+                    insRemaining = insRemaining - 1
+                Else
+                    nhisF = "Non-Insured"
+                End If
+                SaveSingleAdmission dt, wc, i, "F", nhisF
+            Next j
+        End If
+    Next i
+    
+     MsgBox "Entries Saved!", vbInformation
+     For i = 0 To 11
+        Me.Controls("txtM_" & i).Value = "0"
+        Me.Controls("txtF_" & i).Value = "0"
+        Me.Controls("txtIns_" & i).Value = "0"
+        Me.Controls("txtNon_" & i).Value = "0"
+     Next i
+     UpdateTotals
+End Sub
+
+Private Sub btnCancel_Click()
+    Unload Me
+End Sub
+
+Private Sub SaveSingleAdmission(dt As Date, wc As String, ageGrpIdx As Long, sex As String, nhis As String)
+    Dim age As Long
+    Dim unit As String
+    
+    Select Case ageGrpIdx
+        Case 0: age = 14: unit = "Days"
+        Case 1: age = 6: unit = "Months"
+        Case 2: age = 2: unit = "Years"
+        Case 3: age = 7: unit = "Years"
+        Case 4: age = 12: unit = "Years"
+        Case 5: age = 16: unit = "Years"
+        Case 6: age = 18: unit = "Years"
+        Case 7: age = 27: unit = "Years"
+        Case 8: age = 42: unit = "Years"
+        Case 9: age = 55: unit = "Years"
+        Case 10: age = 65: unit = "Years"
+        Case 11: age = 75: unit = "Years"
+    End Select
+    
+    Application.Run "SaveAdmission", dt, wc, "BULK", "Bulk Entry", age, unit, sex, nhis
+End Sub
 '''
 
 VBA_FRM_DEATH_CODE = '''
@@ -1139,18 +1530,30 @@ def create_daily_entry_form(vbproj):
     form.Name = "frmDailyEntry"
     form.Properties("Caption").Value = "Daily Bed State Entry"
     form.Properties("Width").Value = 420
-    form.Properties("Height").Value = 510
+    form.Properties("Height").Value = 530
 
     d = form.Designer
 
     y = 12  # current Y position
 
-    # Date label, textbox, and navigation buttons
-    _add_label(d, "lblDateLabel", "Date (dd/mm/yyyy):", 12, y, 120, 18)
-    _add_textbox(d, "txtDate", 140, y, 100, 20)
-    _add_button(d, "btnPrevDay", "< Prev", 248, y, 55, 20)
-    _add_button(d, "btnNextDay", "Next >", 308, y, 55, 20)
-    _add_button(d, "btnToday", "Today", 368, y, 42, 20)
+    # Date selection: Month combo + Day spinner + navigation
+    _add_label(d, "lblDateLabel", "Date:", 12, y, 40, 18)
+    cmb_month = _add_combobox(d, "cmbMonth", 55, y, 100, 20)
+    _add_label(d, "lblDayLabel", "Day:", 160, y, 30, 18)
+    txt_day = _add_textbox(d, "txtDay", 195, y, 35, 20)
+    # SpinButton for day
+    spn = d.Controls.Add("Forms.SpinButton.1")
+    spn.Name = "spnDay"
+    spn.Left = 232
+    spn.Top = y
+    spn.Width = 18
+    spn.Height = 20
+    spn.Min = 1
+    spn.Max = 31
+    # Navigation buttons
+    _add_button(d, "btnPrevDay", "< Prev", 260, y, 50, 20)
+    _add_button(d, "btnNextDay", "Next >", 315, y, 50, 20)
+    _add_button(d, "btnToday", "Today", 370, y, 42, 20)
     y += 28
 
     # Ward combo
@@ -1182,6 +1585,7 @@ def create_daily_entry_form(vbproj):
         ("txtDeaths24", "Deaths < 24Hrs:"),
         ("txtTransIn", "Transfers In:"),
         ("txtTransOut", "Transfers Out:"),
+        ("txtMalaria", "Malaria Cases:"),
     ]
     for name, caption in fields:
         _add_label(d, f"lbl{name}", caption, 12, y, 120, 18)
@@ -1276,16 +1680,98 @@ def create_admission_form(vbproj):
     y += 38
 
     # Recent admissions list
-    _add_label(d, "lblRecentLabel", "Recent Admissions:", 12, y, 200, 18)
+    _add_label(d, "lblRecent", "Recent Admissions:", 12, y, 150, 18)
     y += 20
     lst = d.Controls.Add("Forms.ListBox.1")
     lst.Name = "lstRecent"
     lst.Left = 12
     lst.Top = y
-    lst.Width = 390
+    lst.Width = 380
     lst.Height = 100
-
+    
+    # Inject code
     form.CodeModule.AddFromString(VBA_FRM_ADMISSION_CODE)
+
+
+def create_ages_entry_form(vbproj):
+    """Create the frmAgesEntry UserForm."""
+    form = vbproj.VBComponents.Add(3)
+    form.Name = "frmAgesEntry"
+    form.Properties("Caption").Value = "Ages Group Admission Entry"
+    form.Properties("Width").Value = 480
+    form.Properties("Height").Value = 550
+
+    d = form.Designer
+    y = 12
+
+    # Date
+    _add_label(d, "lblDateLabel", "Date:", 12, y, 40, 18)
+    cmb_month = _add_combobox(d, "cmbMonth", 55, y, 100, 20)
+    _add_label(d, "lblDayLabel", "Day:", 160, y, 30, 18)
+    txt_day = _add_textbox(d, "txtDay", 195, y, 35, 20)
+    # SpinButton for day
+    spn = d.Controls.Add("Forms.SpinButton.1")
+    spn.Name = "spnDay"
+    spn.Left = 232
+    spn.Top = y
+    spn.Width = 18
+    spn.Height = 20
+    spn.Min = 1
+    spn.Max = 31
+
+    y += 28
+
+    # Ward
+    _add_label(d, "lblWardLabel", "Ward:", 12, y, 60, 18)
+    _add_combobox(d, "cmbWard", 80, y, 180, 22)
+    y += 28
+
+    # Headers for grid
+    y_start = y
+    _add_label(d, "lblHdrAge", "Age Group", 12, y, 80, 18).Font.Bold = True
+    _add_label(d, "lblHdrM", "Male", 100, y, 50, 18).Font.Bold = True
+    _add_label(d, "lblHdrF", "Female", 160, y, 50, 18).Font.Bold = True
+    _add_label(d, "lblHdrIns", "Insured", 220, y, 60, 18).Font.Bold = True
+    _add_label(d, "lblHdrNon", "Non-Ins", 290, y, 60, 18).Font.Bold = True
+    y += 20
+
+    # Grid rows (generated dynamically based on config, but hardcoded here for simplicity)
+    # 0-28 Days, 1-11 Months, 1-4 Years, etc.
+    # We will create simplified inputs: just generic counts for M/F and Ins/Non per age group OR 
+    # to be cleaner: loop through age groups.
+    
+    # Actually, to make it fitting, we will use a ListBox-like approach or just a few key groups?
+    # No, user wants ALL age groups. 
+    # Let's create control arrays by naming convention: txtM_0, txtF_0, txtIns_0, txtNon_0 where 0 is index
+    
+    age_groups = [
+        "0-28 Days", "1-11 Mnths", "1-4 Yrs", "5-9 Yrs", "10-14 Yrs", 
+        "15-17 Yrs", "18-19 Yrs", "20-34 Yrs", "35-49 Yrs", "50-59 Yrs", 
+        "60-69 Yrs", "70+ Yrs"
+    ]
+    
+    for i, ag in enumerate(age_groups):
+        _add_label(d, f"lblAg{i}", ag, 12, y, 80, 18)
+        _add_textbox(d, f"txtM_{i}", 100, y, 50, 18).Value = "0"
+        _add_textbox(d, f"txtF_{i}", 160, y, 50, 18).Value = "0"
+        _add_textbox(d, f"txtIns_{i}", 220, y, 60, 18).Value = "0"
+        _add_textbox(d, f"txtNon_{i}", 290, y, 60, 18).Value = "0"
+        y += 20
+
+    y += 10
+    _add_label(d, "lblTotal", "Total Admissions:", 12, y, 120, 18).Font.Bold = True
+    _add_label(d, "lblTotalVal", "0", 140, y, 60, 18).Font.Bold = True
+    
+    _add_label(d, "lblCheck", "Check (M+F = Ins+Non): OK", 220, y, 200, 18).ForeColor = 0x008000
+    y += 28
+
+    # Buttons
+    _add_button(d, "btnSave", "Save Entries", 12, y, 120, 28)
+    _add_button(d, "btnCancel", "Close", 140, y, 100, 28)
+
+    # Inject code
+    form.CodeModule.AddFromString(VBA_FRM_AGES_ENTRY_CODE)
+
 
 
 def create_death_form(vbproj):
@@ -1426,6 +1912,37 @@ def _add_button(designer, name, caption, left, top, width, height):
     return ctrl
 
 
+def _add_sheet_button(ws, button_name, cell_range_addr, macro_name):
+    """Helper to add a button to a worksheet cell range."""
+    cell_range = ws.Range(cell_range_addr)
+    left = float(cell_range.Left)
+    top = float(cell_range.Top)
+    width = float(cell_range.Width)
+    height = float(cell_range.Height)
+
+    try:
+        # Delete if exists
+        ws.Shapes(button_name).Delete()
+    except:
+        pass
+
+    shp = ws.Shapes.AddShape(5, left, top, width, height)  # 5 = msoShapeRoundedRectangle
+    shp.Name = button_name
+    
+    caption = cell_range.Cells(1, 1).Value
+    
+    shp.TextFrame.Characters().Text = caption
+    shp.TextFrame.Characters().Font.Size = 11
+    shp.TextFrame.Characters().Font.Bold = True
+    shp.TextFrame.Characters().Font.Color = 16777215  # White
+    shp.TextFrame.HorizontalAlignment = -4108  # xlCenter
+    shp.TextFrame.VerticalAlignment = -4108
+    shp.Fill.ForeColor.RGB = 7884319  # Dark blue
+    shp.Line.Visible = False
+    shp.OnAction = macro_name
+
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # NAVIGATION BUTTONS ON CONTROL SHEET
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1434,36 +1951,24 @@ def create_nav_buttons(wb):
     """Add navigation shape-buttons to the Control sheet."""
     ws = wb.Sheets("Control")
 
-    # Remove placeholder text
-    for row in [9, 11, 13, 15]:
+    # Remove placeholder text (now the cells themselves will have the text)
+    for row in [9, 11, 13, 15, 17]: # Added 17 for the new button
         ws.Range(f"A{row}:C{row}").ClearContents
 
-    buttons = [
-        ("Daily Bed Entry",    "ShowDailyEntry",    9),
-        ("Record Admission",   "ShowAdmission",     11),
-        ("Record Death",       "ShowDeath",         13),
-        ("Refresh Reports",    "ShowRefreshReports", 15),
-        ("Export Year-End",    "ExportCarryForward", 17),
-    ]
+    # Set cell values which will become button captions
+    ws.Range("A9").Value = "Daily Bed Entry"
+    ws.Range("A11").Value = "Record Admission"
+    ws.Range("A13").Value = "Record Death"
+    ws.Range("A15").Value = "Record Ages Entry" # New button
+    ws.Range("A17").Value = "Refresh Reports" # Moved
+    ws.Range("A19").Value = "Export Year-End" # Moved down
 
-    for caption, macro_name, row_num in buttons:
-        # Get the position from the cell
-        cell_range = ws.Range(f"A{row_num}")
-        left = float(cell_range.Left)
-        top = float(cell_range.Top)
-        width = 200
-        height = 30
-
-        shp = ws.Shapes.AddShape(5, left, top, width, height)  # 5 = msoShapeRoundedRectangle
-        shp.TextFrame.Characters().Text = caption
-        shp.TextFrame.Characters().Font.Size = 11
-        shp.TextFrame.Characters().Font.Bold = True
-        shp.TextFrame.Characters().Font.Color = 16777215  # White
-        shp.TextFrame.HorizontalAlignment = -4108  # xlCenter
-        shp.TextFrame.VerticalAlignment = -4108
-        shp.Fill.ForeColor.RGB = 7884319  # Dark blue
-        shp.Line.Visible = False
-        shp.OnAction = macro_name
+    _add_sheet_button(ws, "btnDailyEntry", "Control!A9:C9", "ShowDailyEntry")
+    _add_sheet_button(ws, "btnAdmission", "Control!A11:C11", "ShowAdmission")
+    _add_sheet_button(ws, "btnDeath", "Control!A13:C13", "ShowDeath")
+    _add_sheet_button(ws, "btnAgesEntry", "Control!A15:C15", "ShowAgesEntry")
+    _add_sheet_button(ws, "btnRefresh", "Control!A17:C17", "ShowRefreshReports")
+    _add_sheet_button(ws, "btnExportYearEnd", "Control!A19:C19", "ExportCarryForward")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1510,13 +2015,10 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
         tb.CodeModule.AddFromString(VBA_THISWORKBOOK)
 
         # 3. Create UserForms
-        print("  Creating Daily Entry form...")
+        print("  Creating UserForms...")
         create_daily_entry_form(vbproj)
-
-        print("  Creating Admission form...")
         create_admission_form(vbproj)
-
-        print("  Creating Death form...")
+        create_ages_entry_form(vbproj)
         create_death_form(vbproj)
 
         # 4. Add navigation buttons to Control sheet

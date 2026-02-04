@@ -90,7 +90,8 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
         (9,  "[ DAILY BED ENTRY ]",       "Enter daily admissions, discharges, deaths, transfers for each ward"),
         (11, "[ RECORD ADMISSION ]",       "Record individual patient admission details (for age/gender reports)"),
         (13, "[ RECORD DEATH ]",           "Record individual death details (for deaths report)"),
-        (15, "[ REFRESH REPORTS ]",        "Update Deaths Report and COD Summary sheets"),
+        (15, "[ RECORD AGES GROUP ]",      "Quick entry for age group admissions (bulk mode)"),
+        (17, "[ REFRESH REPORTS ]",        "Update Deaths Report and COD Summary sheets"),
     ]
     for row, label, desc in buttons:
         ws.merge_cells(f"A{row}:C{row}")
@@ -178,7 +179,7 @@ def build_daily_data_sheet(wb: Workbook, config: WorkbookConfig):
     headers = [
         "EntryDate", "Month", "WardCode", "Admissions", "Discharges",
         "Deaths", "DeathsUnder24Hrs", "TransfersIn", "TransfersOut",
-        "PrevRemaining", "Remaining", "EntryTimestamp"
+        "PrevRemaining", "Remaining", "MalariaCases", "EntryTimestamp"
     ]
     for col, h in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=h)
@@ -187,7 +188,7 @@ def build_daily_data_sheet(wb: Workbook, config: WorkbookConfig):
     ws.cell(row=2, column=1, value="")
     # Remaining is calculated by VBA (not a formula) for reliability
 
-    tbl = Table(displayName="tblDaily", ref="A1:L2")
+    tbl = Table(displayName="tblDaily", ref="A1:M2")
     tbl.tableStyleInfo = TABLE_STYLE
     ws.add_table(tbl)
 
@@ -360,7 +361,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
         col_headers = [
             "Day of\nthe\nMonth", "Admissions", "Discharges", "Deaths",
             "Deaths\n<24Hrs", "Transfers-\nIn", "Transfers-\nOut",
-            "No. of Patients\nRemaining In\nWard"
+            "No. of Patients\nRemaining In\nWard", "Malaria\nCases"
         ]
         for col, header in enumerate(col_headers, 1):
             c = ws.cell(row=current_row, column=col, value=header)
@@ -381,7 +382,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
             if day <= days:
                 date_ref = f"DATE({config.year},{month_num},{day})"
                 fields = ["Admissions", "Discharges", "Deaths",
-                           "DeathsUnder24Hrs", "TransfersIn", "TransfersOut", "Remaining"]
+                           "DeathsUnder24Hrs", "TransfersIn", "TransfersOut", "Remaining", "MalariaCases"]
                 for col_idx, field_name in enumerate(fields, 2):
                     formula = (
                         f'=IFERROR(IF(SUMIFS(tblDaily[{field_name}],'
@@ -396,7 +397,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
                     c.alignment = CENTER
                     c.border = THIN_BORDER
             else:
-                for col_idx in range(2, 9):
+                for col_idx in range(2, 10):
                     c = ws.cell(row=current_row, column=col_idx)
                     c.fill = GRAY_FILL
                     c.border = THIN_BORDER
@@ -411,7 +412,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
         c.border = THIN_BORDER
 
         total_fields = ["Admissions", "Discharges", "Deaths",
-                        "DeathsUnder24Hrs", "TransfersIn", "TransfersOut"]
+                        "DeathsUnder24Hrs", "TransfersIn", "TransfersOut", "MalariaCases"]
         for col_idx, field_name in enumerate(total_fields, 2):
             formula = (
                 f'=SUMIFS(tblDaily[{field_name}],'
@@ -424,7 +425,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
             c.fill = TOTAL_FILL
             c.border = THIN_BORDER
 
-        # Patient Days (sum of daily remaining)
+        # Patient Days (sum of daily remaining) - column 8
         pd_formula = (
             f'=SUMIFS(tblDaily[Remaining],'
             f'tblDaily[Month],{month_num},'
@@ -447,6 +448,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
     ws.column_dimensions["F"].width = 12
     ws.column_dimensions["G"].width = 12
     ws.column_dimensions["H"].width = 16
+    ws.column_dimensions["I"].width = 12  # Malaria Cases
 
     # Print setup
     ws.page_setup.orientation = "portrait"
@@ -862,6 +864,135 @@ def build_cod_summary_sheet(wb: Workbook, config: WorkbookConfig):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# STATEMENT OF INPATIENT SHEET (Yearly Summary)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_statement_of_inpatient_sheet(wb: Workbook, config: WorkbookConfig):
+    ws = wb.create_sheet("Statement of Inpatient")
+    ws.sheet_properties.tabColor = "0000FF"
+
+    ws.merge_cells("A1:P1")
+    c = ws.cell(row=1, column=1, value="GHANA HEALTH SERVICE - STATEMENT OF INPATIENT (YEARLY SUMMARY)")
+    c.font = HEADER_FONT
+    c.alignment = CENTER
+
+    # Headers same as Monthly Summary
+    col_headers = [
+        "WARD", "Patients on bed\nat start of year",
+        "Bed Complement", "Admissions", "Discharges", "Deaths",
+        "Deaths\n<24Hrs", "Patient\nDays", "Transfer In", "Transfer\nOut",
+        "Average\nDaily Bed\nOccupancy", "Average\nLength\nof Stay",
+        "Bed\nTurnover\nInterval", "Bed\nTurnover\nRate",
+        "Percentage\nof\nOccupancy", "Death\nRate"
+    ]
+    for col, header in enumerate(col_headers, 1):
+        c = ws.cell(row=3, column=col, value=header)
+        c.font = HEADER_FONT_WHITE
+        c.fill = HEADER_FILL
+        c.alignment = CENTER_WRAP
+        c.border = THIN_BORDER
+    
+    current_row = 4
+    days_in_year = 365 + (1 if config.year % 4 == 0 else 0)
+
+    for ward in config.WARDS:
+        r = current_row
+        wc = ward.code
+        
+        # A: Name
+        ws.cell(row=r, column=1, value=ward.name).font = BOLD_FONT
+        
+        # B: Start of year
+        f_beg = (
+            f'=IFERROR(INDEX(tblWardConfig[PrevYearRemaining],'
+            f'MATCH("{wc}",tblWardConfig[WardCode],0)),0)'
+        )
+        ws.cell(row=r, column=2, value=f_beg).font = NORMAL_FONT
+        
+        # C: BC
+        f_bc = f'=IFERROR(INDEX(tblWardConfig[BedComplement],MATCH("{wc}",tblWardConfig[WardCode],0)),0)'
+        ws.cell(row=r, column=3, value=f_bc).font = NORMAL_FONT
+        
+        # D-G, I-J: Sums
+        ws.cell(row=r, column=4, value=f'=SUMIFS(tblDaily[Admissions],tblDaily[WardCode],"{wc}")')
+        ws.cell(row=r, column=5, value=f'=SUMIFS(tblDaily[Discharges],tblDaily[WardCode],"{wc}")')
+        ws.cell(row=r, column=6, value=f'=SUMIFS(tblDaily[Deaths],tblDaily[WardCode],"{wc}")')
+        ws.cell(row=r, column=7, value=f'=SUMIFS(tblDaily[DeathsUnder24Hrs],tblDaily[WardCode],"{wc}")')
+        ws.cell(row=r, column=8, value=f'=SUMIFS(tblDaily[Remaining],tblDaily[WardCode],"{wc}")')
+        ws.cell(row=r, column=9, value=f'=SUMIFS(tblDaily[TransfersIn],tblDaily[WardCode],"{wc}")')
+        ws.cell(row=r, column=10, value=f'=SUMIFS(tblDaily[TransfersOut],tblDaily[WardCode],"{wc}")')
+        
+        # KPIs
+        bc_Ref = f"C{r}"
+        pd_Ref = f"H{r}"
+        adm_Ref = f"D{r}"
+        dis_Ref = f"E{r}"
+        dth_Ref = f"F{r}"
+        beg_Ref = f"B{r}"
+        
+        # Av Occ = PD / 365
+        ws.cell(row=r, column=11, value=f'=IFERROR({pd_Ref}/{days_in_year},0)')
+        # Av LOS = PD / (Dis + Dth)
+        ws.cell(row=r, column=12, value=f'=IFERROR({pd_Ref}/({dis_Ref}+{dth_Ref}),0)')
+        # Turn Int = (BC*365 - PD) / (Dis + Dth)
+        ws.cell(row=r, column=13, value=f'=IFERROR(({bc_Ref}*{days_in_year}-{pd_Ref})/({dis_Ref}+{dth_Ref}),0)')
+        # Turn Rate = (Dis + Dth) / BC
+        ws.cell(row=r, column=14, value=f'=IFERROR(({dis_Ref}+{dth_Ref})/{bc_Ref},0)')
+        # % Occ = (PD / (BC*365)) * 100
+        ws.cell(row=r, column=15, value=f'=IFERROR(({pd_Ref}/({bc_Ref}*{days_in_year}))*100,0)')
+        # Death Rate
+        ws.cell(row=r, column=16, value=f'=IFERROR(({dth_Ref}/({adm_Ref}+{beg_Ref}))*100,0)')
+        
+        current_row += 1
+
+    # Format
+    for r in range(4, current_row):
+        for c in range(1, 17):
+            ws.cell(row=r, column=c).border = THIN_BORDER
+        for c in range(11, 17):
+            ws.cell(row=r, column=c).number_format = '0.00'
+            
+    ws.column_dimensions["A"].width = 18
+    for i in range(2, 17):
+        ws.column_dimensions[get_column_letter(i)].width = 12
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# NON-INSURED REPORT SHEET
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_non_insured_report_sheet(wb: Workbook, config: WorkbookConfig):
+    ws = wb.create_sheet("Non-Insured Report")
+    ws.sheet_properties.tabColor = "FFA500"
+
+    ws.merge_cells("A1:J1")
+    c = ws.cell(row=1, column=1, value="NON-INSURED ATTENDANTS REPORT")
+    c.font = HEADER_FONT
+    c.alignment = CENTER
+
+    headers = ["S/N", "Date", "Month", "Ward", "Patient ID", "Name", "Age", "Sex", "Amount", "Status"]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=2, column=col, value=h)
+        c.font = HEADER_FONT_WHITE
+        c.fill = HEADER_FILL
+        c.alignment = CENTER
+        c.border = THIN_BORDER
+
+    ws.cell(row=3, column=1, value="(Click 'Refresh Reports' to populate)").font = NORMAL_FONT
+    
+    ws.column_dimensions["A"].width = 6
+    ws.column_dimensions["B"].width = 12
+    ws.column_dimensions["C"].width = 10
+    ws.column_dimensions["D"].width = 12
+    ws.column_dimensions["E"].width = 15
+    ws.column_dimensions["F"].width = 25
+    ws.column_dimensions["G"].width = 8
+    ws.column_dimensions["H"].width = 6
+    ws.column_dimensions["I"].width = 12
+    ws.column_dimensions["J"].width = 12
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN BUILD FUNCTION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -892,6 +1023,12 @@ def build_structure(config: WorkbookConfig, output_path: str):
 
     # 7. COD Summary
     build_cod_summary_sheet(wb, config)
+    
+    # 8. Statement of Inpatient
+    build_statement_of_inpatient_sheet(wb, config)
+    
+    # 9. Non-Insured Report
+    build_non_insured_report_sheet(wb, config)
 
     # Save
     wb.save(output_path)
