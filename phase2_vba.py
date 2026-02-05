@@ -35,46 +35,46 @@ VBA_MOD_DATA_ACCESS = '''
 Option Explicit
 
 Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) As Long
+    ' OPTIMIZED: Scans backward from end (most recent entries)
+    ' Assumes table sorted by WardCode, then EntryDate (ascending)
+
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Sheets("DailyData")
     Dim tbl As ListObject
     Set tbl = ws.ListObjects("tblDaily")
 
-    Dim bestDate As Date
-    Dim bestRemaining As Long
-    bestDate = #1/1/1900#
-    bestRemaining = 0
-
-    ' If table has no real data, check config for PrevYearRemaining
+    ' Check for empty table
     If tbl.ListRows.Count <= 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
-            bestRemaining = GetPrevYearRemaining(wardCode)
-            GetLastRemainingForWard = bestRemaining
+        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Then
+            GetLastRemainingForWard = GetPrevYearRemaining(wardCode)
             Exit Function
         End If
     End If
 
+    ' Scan BACKWARD - finds recent entries faster
     Dim i As Long
-    For i = 1 To tbl.ListRows.Count
+    For i = tbl.ListRows.Count To 1 Step -1
+        Dim rowWard As String
         Dim rowDate As Variant
+
+        rowWard = tbl.ListRows(i).Range(1, 3).Value
         rowDate = tbl.ListRows(i).Range(1, 1).Value
-        If IsDate(rowDate) Then
-            If CDate(rowDate) < beforeDate And _
-               tbl.ListRows(i).Range(1, 3).Value = wardCode Then
-                If CDate(rowDate) > bestDate Then
-                    bestDate = CDate(rowDate)
-                    bestRemaining = CLng(tbl.ListRows(i).Range(1, 11).Value)
-                End If
+
+        If rowWard = wardCode And IsDate(rowDate) Then
+            If CDate(rowDate) < beforeDate Then
+                ' Found most recent prior entry
+                GetLastRemainingForWard = CLng(tbl.ListRows(i).Range(1, 11).Value)
+                Exit Function
             End If
+        ElseIf rowWard <> wardCode And rowWard <> "" Then
+            ' Passed this ward's section (sorted by ward) - no more to check
+            ' NOTE: Only exit if we haven't found anything yet
+            If i < tbl.ListRows.Count Then Exit For
         End If
     Next i
 
-    ' If no previous entry found, use PrevYearRemaining
-    If bestDate = #1/1/1900# Then
-        bestRemaining = GetPrevYearRemaining(wardCode)
-    End If
-
-    GetLastRemainingForWard = bestRemaining
+    ' No prior entry found - use PrevYearRemaining
+    GetLastRemainingForWard = GetPrevYearRemaining(wardCode)
 End Function
 
 Public Function GetPrevYearRemaining(wardCode As String) As Long
@@ -131,23 +131,64 @@ Public Function CheckDuplicateDaily(entryDate As Date, wardCode As String) As Lo
     CheckDuplicateDaily = 0
 End Function
 
+Public Sub CalculateRemainingForRow(targetRow As ListRow)
+    ' UNIFIED CALCULATION FUNCTION - used by both form entry and manual edits
+    ' This is the SINGLE source of truth for calculating PrevRemaining and Remaining
+    On Error Resume Next
+
+    ' Get values from the row
+    Dim entryDate As Variant
+    entryDate = targetRow.Range.Cells(1, 1).Value
+    If Not IsDate(entryDate) Then Exit Sub
+
+    Dim wardCode As String
+    wardCode = CStr(targetRow.Range.Cells(1, 3).Value)
+    If wardCode = "" Then Exit Sub
+
+    ' Get previous remaining (looks backward in time)
+    Dim prevRemaining As Long
+    prevRemaining = GetLastRemainingForWard(wardCode, CDate(entryDate))
+
+    ' Get input values from the row
+    Dim admissions As Long, discharges As Long, deaths As Long
+    Dim deathsU24 As Long, transIn As Long, transOut As Long
+
+    admissions = CLng(Val(targetRow.Range.Cells(1, 4).Value))
+    discharges = CLng(Val(targetRow.Range.Cells(1, 5).Value))
+    deaths = CLng(Val(targetRow.Range.Cells(1, 6).Value))
+    deathsU24 = CLng(Val(targetRow.Range.Cells(1, 7).Value))
+    transIn = CLng(Val(targetRow.Range.Cells(1, 8).Value))
+    transOut = CLng(Val(targetRow.Range.Cells(1, 9).Value))
+
+    ' Calculate remaining
+    ' Formula: Remaining = PrevRemaining + Admissions + TransfersIn - Discharges - Deaths - TransfersOut - DeathsUnder24Hrs
+    Dim remaining As Long
+    remaining = prevRemaining + admissions + transIn - discharges - deaths - transOut - deathsU24
+
+    ' Update the calculated columns
+    targetRow.Range.Cells(1, 10).Value = prevRemaining
+    targetRow.Range.Cells(1, 11).Value = remaining
+End Sub
+
 Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
     admissions As Long, discharges As Long, deaths As Long, _
-    deathsU24 As Long, transIn As Long, transOut As Long, malariaCases As Long)
+    deathsU24 As Long, transIn As Long, transOut As Long)
+
+    ' PERFORMANCE OPTIMIZATIONS
+    Application.EnableEvents = False        ' Prevent event recursion
+    Application.ScreenUpdating = False      ' 50-80% faster
+    Application.Calculation = xlCalculationManual  ' No mid-save recalcs
 
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Sheets("DailyData")
     Dim tbl As ListObject
     Set tbl = ws.ListObjects("tblDaily")
 
-    Dim prevRemaining As Long
-    prevRemaining = GetLastRemainingForWard(wardCode, entryDate)
-
-    ' Check if this is the seed row (empty first row)
+    ' Check if this is the seed row
     Dim useSeedRow As Boolean
     useSeedRow = False
     If tbl.ListRows.Count = 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
+        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Then
             useSeedRow = True
         End If
     End If
@@ -164,12 +205,7 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
         Set targetRow = tbl.ListRows.Add
     End If
 
-    ' Calculate remaining as a VALUE (not formula - more reliable)
-    ' Formula: Remaining = PrevRemaining + Admissions + TransfersIn - (Discharges + Deaths + TransfersOut) - Deaths<24Hrs
-    ' Deaths and Deaths<24Hrs are SEPARATE counts (not a subset)
-    Dim remaining As Long
-    remaining = prevRemaining + admissions + transIn - discharges - deaths - transOut - deathsU24
-
+    ' Write input values
     With targetRow.Range
         .Cells(1, 1).Value = entryDate
         .Cells(1, 1).NumberFormat = "yyyy-mm-dd"
@@ -181,12 +217,180 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
         .Cells(1, 7).Value = deathsU24
         .Cells(1, 8).Value = transIn
         .Cells(1, 9).Value = transOut
-        .Cells(1, 10).Value = prevRemaining
-        .Cells(1, 11).Value = remaining
-        .Cells(1, 12).Value = malariaCases
-        .Cells(1, 13).Value = Now
-        .Cells(1, 13).NumberFormat = "yyyy-mm-dd hh:mm"
+        .Cells(1, 12).Value = Now
+        .Cells(1, 12).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
+
+    ' Calculate using unified function
+    CalculateRemainingForRow targetRow
+
+    ' Sort table
+    SortDailyTable
+
+    ' Find row index after sort (may have moved)
+    Dim newRowIndex As Long
+    For newRowIndex = 1 To tbl.ListRows.Count
+        If tbl.ListRows(newRowIndex).Range(1, 1).Value = entryDate And _
+           tbl.ListRows(newRowIndex).Range(1, 3).Value = wardCode Then
+            Exit For
+        End If
+    Next newRowIndex
+
+    ' Cascade recalculation
+    RecalculateSubsequentRows tbl, newRowIndex, wardCode
+
+    ' RESTORE Excel state
+    Application.Calculation = xlCalculationAutomatic
+    Application.Calculate  ' Force ward sheets to update
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+End Sub
+
+Public Sub RecalculateRow(tbl As ListObject, rowIndex As Long)
+    ' Recalculate PrevRemaining and Remaining for a specific row
+    ' This is called when user manually edits a row
+    ' Simply delegates to the unified calculation function
+    On Error Resume Next
+
+    If rowIndex < 1 Or rowIndex > tbl.ListRows.Count Then Exit Sub
+
+    Dim targetRow As ListRow
+    Set targetRow = tbl.ListRows(rowIndex)
+
+    ' Use unified calculation function
+    CalculateRemainingForRow targetRow
+End Sub
+
+Public Sub RecalculateSubsequentRows(tbl As ListObject, startRowIndex As Long, wardCode As String)
+    ' OPTIMIZED: Early exit when different ward encountered
+    On Error Resume Next
+
+    If startRowIndex >= tbl.ListRows.Count Then Exit Sub
+
+    Dim i As Long
+    Dim processedCount As Long
+    processedCount = 0
+
+    For i = startRowIndex + 1 To tbl.ListRows.Count
+        Dim rowWard As String
+        rowWard = tbl.ListRows(i).Range.Cells(1, 3).Value
+
+        If rowWard = wardCode Then
+            ' Same ward - recalculate
+            CalculateRemainingForRow tbl.ListRows(i)
+            processedCount = processedCount + 1
+        ElseIf processedCount > 0 Then
+            ' Different ward & we've already processed some rows
+            ' Table is sorted by ward, so we're done
+            Exit For
+        End If
+    Next i
+End Sub
+
+Public Sub SortDailyTable()
+    ' Sort tblDaily by WardCode, then EntryDate (ascending)
+    ' This ensures MAXIFS finds the correct "previous" remaining value
+    On Error Resume Next
+
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("DailyData")
+    Dim tbl As ListObject
+    Set tbl = ws.ListObjects("tblDaily")
+
+    ' Only sort if table has real data
+    If tbl.ListRows.Count <= 1 Then Exit Sub
+    If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Then Exit Sub
+
+    ' Clear existing sort
+    ws.Sort.SortFields.Clear
+
+    ' Add sort fields: WardCode (col 3), then EntryDate (col 1)
+    ws.Sort.SortFields.Add Key:=tbl.ListColumns("WardCode").DataBodyRange, _
+        SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+    ws.Sort.SortFields.Add Key:=tbl.ListColumns("EntryDate").DataBodyRange, _
+        SortOn:=xlSortOnValues, Order:=xlAscending, DataOption:=xlSortNormal
+
+    ' Apply sort to table
+    With ws.Sort
+        .SetRange tbl.Range
+        .Header = xlYes
+        .MatchCase = False
+        .Orientation = xlTopToBottom
+        .SortMethod = xlPinYin
+        .Apply
+    End With
+End Sub
+
+Public Sub RecalculateAllRows()
+    ' Manual recalculation of all rows - useful for testing
+    Application.EnableEvents = False
+    Application.ScreenUpdating = False
+    Application.Calculation = xlCalculationManual
+
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("DailyData")
+    Dim tbl As ListObject
+    Set tbl = ws.ListObjects("tblDaily")
+
+    ' Sort first
+    SortDailyTable
+
+    ' Recalculate each row
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) Then
+            CalculateRemainingForRow tbl.ListRows(i)
+        End If
+    Next i
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.Calculate
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+    MsgBox "Recalculated " & tbl.ListRows.Count & " rows", vbInformation
+End Sub
+
+Public Sub VerifyCalculations()
+    ' Diagnostic: Check if all calculations are correct
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("DailyData")
+    Dim tbl As ListObject
+    Set tbl = ws.ListObjects("tblDaily")
+
+    Dim errors As Long
+    errors = 0
+
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        Dim entryDate As Variant
+        Dim wardCode As String
+
+        entryDate = tbl.ListRows(i).Range(1, 1).Value
+        wardCode = tbl.ListRows(i).Range(1, 3).Value
+
+        If IsDate(entryDate) And wardCode <> "" Then
+            ' Calculate expected
+            Dim expectedPrev As Long
+            expectedPrev = GetLastRemainingForWard(wardCode, CDate(entryDate))
+
+            Dim actualPrev As Long
+            actualPrev = CLng(tbl.ListRows(i).Range(1, 10).Value)
+
+            If actualPrev <> expectedPrev Then
+                errors = errors + 1
+                Debug.Print "Row " & i & " ERROR: Ward=" & wardCode & _
+                    " Date=" & Format(entryDate, "yyyy-mm-dd") & _
+                    " Expected=" & expectedPrev & " Actual=" & actualPrev
+            End If
+        End If
+    Next i
+
+    If errors = 0 Then
+        MsgBox "All " & tbl.ListRows.Count & " rows verified correct!", vbInformation
+    Else
+        MsgBox "Found " & errors & " errors. See Immediate Window.", vbExclamation
+    End If
 End Sub
 
 Public Sub SaveAdmission(admDate As Date, wardCode As String, _
@@ -698,7 +902,6 @@ Private Sub UserForm_Initialize()
     txtDeaths24.Value = "0"
     txtTransIn.Value = "0"
     txtTransOut.Value = "0"
-    txtMalaria.Value = "0"
 
     isLoading = False
     UpdatePrevRemaining
@@ -813,7 +1016,6 @@ Private Sub CheckExistingEntry()
         txtDeaths24.Value = CStr(tbl.ListRows(existRow).Range(1, 7).Value)
         txtTransIn.Value = CStr(tbl.ListRows(existRow).Range(1, 8).Value)
         txtTransOut.Value = CStr(tbl.ListRows(existRow).Range(1, 9).Value)
-        txtMalaria.Value = CStr(tbl.ListRows(existRow).Range(1, 12).Value)
         lblStatus.Caption = "* Existing entry loaded"
         lblStatus.ForeColor = RGB(200, 100, 0)
     Else
@@ -823,8 +1025,7 @@ Private Sub CheckExistingEntry()
         txtDeaths24.Value = "0"
         txtTransIn.Value = "0"
         txtTransOut.Value = "0"
-        txtMalaria.Value = "0"
-        lblStatus.Caption = "New entry"
+            lblStatus.Caption = "New entry"
         lblStatus.ForeColor = RGB(100, 100, 100)
     End If
     isLoading = False
@@ -836,56 +1037,30 @@ Private Sub txtAdmissions_Change()
     If Not isLoading Then isDirty = True
     CalculateRemaining
 End Sub
-Private Sub txtAdmissions_Exit(ByVal Cancel As MSForms.ReturnBoolean)
-    SaveCurrentEntry
-End Sub
 
 Private Sub txtDischarges_Change()
     If Not isLoading Then isDirty = True
     CalculateRemaining
-End Sub
-Private Sub txtDischarges_Exit(ByVal Cancel As MSForms.ReturnBoolean)
-    SaveCurrentEntry
 End Sub
 
 Private Sub txtDeaths_Change()
     If Not isLoading Then isDirty = True
     CalculateRemaining
 End Sub
-Private Sub txtDeaths_Exit(ByVal Cancel As MSForms.ReturnBoolean)
-    SaveCurrentEntry
-End Sub
 
 Private Sub txtDeaths24_Change()
     If Not isLoading Then isDirty = True
-    ' Deaths24 doesn't affect Remaining, but trigger Calc anyway
     CalculateRemaining
-End Sub
-Private Sub txtDeaths24_Exit(ByVal Cancel As MSForms.ReturnBoolean)
-    SaveCurrentEntry
 End Sub
 
 Private Sub txtTransIn_Change()
     If Not isLoading Then isDirty = True
     CalculateRemaining
 End Sub
-Private Sub txtTransIn_Exit(ByVal Cancel As MSForms.ReturnBoolean)
-    SaveCurrentEntry
-End Sub
 
 Private Sub txtTransOut_Change()
     If Not isLoading Then isDirty = True
     CalculateRemaining
-End Sub
-Private Sub txtTransOut_Exit(ByVal Cancel As MSForms.ReturnBoolean)
-    SaveCurrentEntry
-End Sub
-
-Private Sub txtMalaria_Change()
-    If Not isLoading Then isDirty = True
-End Sub
-Private Sub txtMalaria_Exit(ByVal Cancel As MSForms.ReturnBoolean)
-    SaveCurrentEntry
 End Sub
 
 Private Sub CalculateRemaining()
@@ -1025,24 +1200,18 @@ Private Function SaveCurrentEntry() As Boolean
     entryDate = GetSelectedDate()
 
     Dim adm As Long, dis As Long, dth As Long
-    Dim d24 As Long, ti As Long, tOut As Long, mal As Long
+    Dim d24 As Long, ti As Long, tOut As Long
     adm = CLng(Val(txtAdmissions.Value))
     dis = CLng(Val(txtDischarges.Value))
     dth = CLng(Val(txtDeaths.Value))
     d24 = CLng(Val(txtDeaths24.Value))
     ti = CLng(Val(txtTransIn.Value))
     tOut = CLng(Val(txtTransOut.Value))
-    mal = CLng(Val(txtMalaria.Value))
-
-    If d24 > dth Then
-        MsgBox "Deaths <24Hrs cannot exceed total Deaths.", vbExclamation
-        Exit Function
-    End If
 
     Dim wc As String
     wc = wardCodes(cmbWard.ListIndex)
 
-    SaveDailyEntry entryDate, wc, adm, dis, dth, d24, ti, tOut, mal
+    SaveDailyEntry entryDate, wc, adm, dis, dth, d24, ti, tOut
 
     lblStatus.Caption = "Saved: " & wardNames(cmbWard.ListIndex) & " - " & Format(entryDate, "dd/mm/yyyy")
     lblStatus.ForeColor = RGB(0, 128, 0)
@@ -1450,6 +1619,76 @@ Private Sub Workbook_Open()
 End Sub
 '''
 
+VBA_SHEET_DAILYDATA = '''
+Private Sub Worksheet_Change(ByVal Target As Range)
+    ' Auto-recalculate when user manually edits input columns
+    ' CRITICAL: Must be in DailyData worksheet module
+
+    On Error GoTo ErrorHandler
+
+    ' Check if events are enabled (prevents recursion)
+    If Not Application.EnableEvents Then Exit Sub
+
+    Dim tbl As ListObject
+    Set tbl = Me.ListObjects("tblDaily")
+
+    ' Check if change intersects table data body
+    Dim intersectRange As Range
+    Set intersectRange = Application.Intersect(Target, tbl.DataBodyRange)
+
+    If Not intersectRange Is Nothing Then
+        ' Disable events and screen updates for performance
+        Application.EnableEvents = False
+        Application.ScreenUpdating = False
+
+        ' Process each changed cell
+        Dim cell As Range
+        For Each cell In intersectRange
+            ' Get column index within table (1-based)
+            Dim colIdx As Long
+            colIdx = cell.Column - tbl.Range.Column + 1
+
+            ' Only trigger on input columns (4-9)
+            If colIdx >= 4 And colIdx <= 9 Then
+                ' Get row index within table
+                Dim rowIdx As Long
+                rowIdx = cell.Row - tbl.HeaderRowRange.Row
+
+                If rowIdx >= 1 And rowIdx <= tbl.ListRows.Count Then
+                    ' Recalculate this row
+                    CalculateRemainingForRow tbl.ListRows(rowIdx)
+
+                    ' Get ward code for cascading
+                    Dim wardCode As String
+                    wardCode = CStr(tbl.ListRows(rowIdx).Range.Cells(1, 3).Value)
+
+                    ' Sort table (needed for PrevRemaining lookup)
+                    SortDailyTable
+
+                    ' Recalculate subsequent rows for this ward
+                    RecalculateSubsequentRows tbl, rowIdx, wardCode
+
+                    ' Exit after first change (avoid duplicate work)
+                    Exit For
+                End If
+            End If
+        Next cell
+
+        ' Force ward sheets to recalculate
+        Application.Calculate
+    End If
+
+ErrorHandler:
+    ' Always restore Excel state even if error occurs
+    Application.EnableEvents = True
+    Application.ScreenUpdating = True
+
+    If Err.Number <> 0 Then
+        Debug.Print "Worksheet_Change Error: " & Err.Description
+    End If
+End Sub
+'''
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # USERFORM CREATION FUNCTIONS
@@ -1516,7 +1755,6 @@ def create_daily_entry_form(vbproj):
         ("txtDeaths24", "Deaths < 24Hrs:"),
         ("txtTransIn", "Transfers In:"),
         ("txtTransOut", "Transfers Out:"),
-        ("txtMalaria", "Malaria Cases:"),
     ]
     for name, caption in fields:
         _add_label(d, f"lbl{name}", caption, 12, y, 120, 18)
@@ -1893,6 +2131,12 @@ def create_nav_buttons(wb):
     _add_sheet_button(ws, "btnRefresh", "Control!A17:C17", "ShowRefreshReports")
     _add_sheet_button(ws, "btnExportYearEnd", "Control!A19:C19", "ExportCarryForward")
 
+    # Diagnostic buttons (row 22 and 24 for spacing)
+    ws.Range("A22").Value = "Recalculate All Data"
+    ws.Range("A24").Value = "Verify Calculations"
+    _add_sheet_button(ws, "btnRecalcAll", "Control!A22:C22", "RecalculateAllRows")
+    _add_sheet_button(ws, "btnVerify", "Control!A24:C24", "VerifyCalculations")
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN INJECTION FUNCTION
@@ -1936,6 +2180,28 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
         print("  Injecting ThisWorkbook code...")
         tb = vbproj.VBComponents("ThisWorkbook")
         tb.CodeModule.AddFromString(VBA_THISWORKBOOK)
+
+        # 2.5. Inject DailyData worksheet change event
+        print("  Injecting DailyData worksheet event...")
+        daily_data_injected = False
+
+        for comp in vbproj.VBComponents:
+            try:
+                # Only check worksheet components (Type 100 = vbext_ct_Document)
+                if comp.Type == 100:
+                    comp_name = comp.Properties("Name").Value
+                    if comp_name == "DailyData":
+                        comp.CodeModule.AddFromString(VBA_SHEET_DAILYDATA)
+                        print(f"    [OK] Event injected into {comp_name} worksheet")
+                        daily_data_injected = True
+                        break
+            except Exception as e:
+                # Log specific errors instead of silent failure
+                print(f"    ! Component check failed: {e}")
+                continue
+
+        if not daily_data_injected:
+            raise ValueError("CRITICAL: Failed to inject Worksheet_Change event into DailyData sheet!")
 
         # 3. Create UserForms
         print("  Creating UserForms...")

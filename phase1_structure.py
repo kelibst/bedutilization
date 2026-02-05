@@ -179,16 +179,26 @@ def build_daily_data_sheet(wb: Workbook, config: WorkbookConfig):
     headers = [
         "EntryDate", "Month", "WardCode", "Admissions", "Discharges",
         "Deaths", "DeathsUnder24Hrs", "TransfersIn", "TransfersOut",
-        "PrevRemaining", "Remaining", "MalariaCases", "EntryTimestamp"
+        "PrevRemaining", "Remaining", "EntryTimestamp"
     ]
     for col, h in enumerate(headers, 1):
         ws.cell(row=1, column=col, value=h)
 
-    # Seed row (needed for table creation; will be overwritten by VBA on first entry)
-    ws.cell(row=2, column=1, value="")
-    # Remaining is calculated by VBA (not a formula) for reliability
+    # Seed row (VBA calculates PrevRemaining and Remaining as VALUES)
+    ws.cell(row=2, column=1, value="")  # EntryDate (VBA fills)
+    ws.cell(row=2, column=2, value="")  # Month (VBA fills)
+    ws.cell(row=2, column=3, value="")  # WardCode (VBA fills)
+    ws.cell(row=2, column=4, value="")  # Admissions (VBA fills)
+    ws.cell(row=2, column=5, value="")  # Discharges (VBA fills)
+    ws.cell(row=2, column=6, value="")  # Deaths (VBA fills)
+    ws.cell(row=2, column=7, value="")  # DeathsUnder24Hrs (VBA fills)
+    ws.cell(row=2, column=8, value="")  # TransfersIn (VBA fills)
+    ws.cell(row=2, column=9, value="")  # TransfersOut (VBA fills)
+    ws.cell(row=2, column=10, value="")  # PrevRemaining (VBA calculates)
+    ws.cell(row=2, column=11, value="")  # Remaining (VBA calculates)
+    ws.cell(row=2, column=12, value="")  # EntryTimestamp (VBA fills)
 
-    tbl = Table(displayName="tblDaily", ref="A1:M2")
+    tbl = Table(displayName="tblDaily", ref="A1:L2")
     tbl.tableStyleInfo = TABLE_STYLE
     ws.add_table(tbl)
 
