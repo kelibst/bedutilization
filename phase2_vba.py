@@ -35,8 +35,8 @@ VBA_MOD_DATA_ACCESS = '''
 Option Explicit
 
 Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) As Long
-    ' OPTIMIZED: Scans backward from end (most recent entries)
-    ' Assumes table sorted by WardCode, then EntryDate (ascending)
+    ' FIXED: Scans backward through ALL rows without premature exits
+    ' Tracks the most recent matching entry for accurate calculation
 
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Sheets("DailyData")
@@ -51,7 +51,14 @@ Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) 
         End If
     End If
 
-    ' Scan BACKWARD - finds recent entries faster
+    ' Scan backward through ALL rows - no premature exits
+    Dim foundRemaining As Long
+    Dim foundDate As Date
+    Dim hasMatch As Boolean
+
+    foundDate = #1/1/1900#
+    hasMatch = False
+
     Dim i As Long
     For i = tbl.ListRows.Count To 1 Step -1
         Dim rowWard As String
@@ -61,20 +68,25 @@ Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) 
         rowDate = tbl.ListRows(i).Range(1, 1).Value
 
         If rowWard = wardCode And IsDate(rowDate) Then
-            If CDate(rowDate) < beforeDate Then
-                ' Found most recent prior entry
-                GetLastRemainingForWard = CLng(tbl.ListRows(i).Range(1, 11).Value)
-                Exit Function
+            Dim currentDate As Date
+            currentDate = CDate(rowDate)
+            If currentDate < beforeDate Then
+                ' Found a matching prior entry - keep track of most recent
+                If currentDate > foundDate Then
+                    foundDate = currentDate
+                    foundRemaining = CLng(tbl.ListRows(i).Range(1, 11).Value)
+                    hasMatch = True
+                End If
             End If
-        ElseIf rowWard <> wardCode And rowWard <> "" Then
-            ' Passed this ward's section (sorted by ward) - no more to check
-            ' NOTE: Only exit if we haven't found anything yet
-            If i < tbl.ListRows.Count Then Exit For
         End If
     Next i
 
-    ' No prior entry found - use PrevYearRemaining
-    GetLastRemainingForWard = GetPrevYearRemaining(wardCode)
+    ' Return the most recent match, or PrevYearRemaining if no match
+    If hasMatch Then
+        GetLastRemainingForWard = foundRemaining
+    Else
+        GetLastRemainingForWard = GetPrevYearRemaining(wardCode)
+    End If
 End Function
 
 Public Function GetPrevYearRemaining(wardCode As String) As Long
@@ -391,6 +403,139 @@ Public Sub VerifyCalculations()
     Else
         MsgBox "Found " & errors & " errors. See Immediate Window.", vbExclamation
     End If
+End Sub
+
+Public Sub ImportFromOldWorkbook()
+    ' Import data from a previous workbook (backward compatibility)
+    ' Copies INPUT columns only and recalculates everything
+
+    On Error GoTo ErrorHandler
+
+    ' Prompt user to select old workbook
+    Dim fd As FileDialog
+    Set fd = Application.FileDialog(msoFileDialogFilePicker)
+
+    fd.Title = "Select Previous Bed Utilization Workbook (.xlsm)"
+    fd.Filters.Clear
+    fd.Filters.Add "Excel Macro-Enabled Workbooks", "*.xlsm"
+    fd.AllowMultiSelect = False
+
+    If fd.Show <> -1 Then Exit Sub ' User cancelled
+
+    Dim oldPath As String
+    oldPath = fd.SelectedItems(1)
+
+    ' Confirm with user
+    If MsgBox("Import data from:" & vbCrLf & oldPath & vbCrLf & vbCrLf & _
+              "This will copy all daily entries and recalculate. Continue?", _
+              vbYesNo + vbQuestion, "Import Data") <> vbYes Then
+        Exit Sub
+    End If
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    ' Open old workbook
+    Dim oldWB As Workbook
+    Set oldWB = Workbooks.Open(oldPath, ReadOnly:=True, UpdateLinks:=False)
+
+    ' Get old DailyData table
+    Dim oldWS As Worksheet
+    Set oldWS = oldWB.Sheets("DailyData")
+    Dim oldTbl As ListObject
+    Set oldTbl = oldWS.ListObjects("tblDaily")
+
+    ' Get new DailyData table
+    Dim newWS As Worksheet
+    Set newWS = ThisWorkbook.Sheets("DailyData")
+    Dim newTbl As ListObject
+    Set newTbl = newWS.ListObjects("tblDaily")
+
+    Dim importCount As Long
+    importCount = 0
+    Dim useSeedRow As Boolean
+    useSeedRow = False
+
+    ' Check if new table has empty seed row
+    If newTbl.ListRows.Count = 1 Then
+        If IsEmpty(newTbl.ListRows(1).Range(1, 1).Value) Then
+            useSeedRow = True
+        End If
+    End If
+
+    ' Import each row from old workbook
+    Dim i As Long
+    For i = 1 To oldTbl.ListRows.Count
+        ' Check if row has data
+        Dim oldDate As Variant
+        oldDate = oldTbl.ListRows(i).Range(1, 1).Value
+
+        If IsDate(oldDate) Then
+            ' Determine target row
+            Dim newRow As ListRow
+            If useSeedRow And importCount = 0 Then
+                Set newRow = newTbl.ListRows(1)
+            Else
+                Set newRow = newTbl.ListRows.Add
+            End If
+
+            ' Copy INPUT columns only (1-9)
+            ' Skip calculated columns (10-11) - will be recalculated
+            With newRow.Range
+                .Cells(1, 1).Value = oldTbl.ListRows(i).Range(1, 1).Value ' EntryDate
+                .Cells(1, 2).Value = oldTbl.ListRows(i).Range(1, 2).Value ' Month
+                .Cells(1, 3).Value = oldTbl.ListRows(i).Range(1, 3).Value ' WardCode
+                .Cells(1, 4).Value = oldTbl.ListRows(i).Range(1, 4).Value ' Admissions
+                .Cells(1, 5).Value = oldTbl.ListRows(i).Range(1, 5).Value ' Discharges
+                .Cells(1, 6).Value = oldTbl.ListRows(i).Range(1, 6).Value ' Deaths
+                .Cells(1, 7).Value = oldTbl.ListRows(i).Range(1, 7).Value ' DeathsU24
+                .Cells(1, 8).Value = oldTbl.ListRows(i).Range(1, 8).Value ' TransfersIn
+                .Cells(1, 9).Value = oldTbl.ListRows(i).Range(1, 9).Value ' TransfersOut
+                ' Columns 10-11: Will be calculated after import
+                .Cells(1, 12).Value = Now ' New timestamp
+            End With
+
+            importCount = importCount + 1
+        End If
+    Next i
+
+    ' Close old workbook
+    oldWB.Close SaveChanges:=False
+    Set oldWB = Nothing
+
+    ' Sort imported data
+    SortDailyTable
+
+    ' Recalculate all rows using unified function
+    Dim j As Long
+    For j = 1 To newTbl.ListRows.Count
+        If Not IsEmpty(newTbl.ListRows(j).Range(1, 1).Value) Then
+            CalculateRemainingForRow newTbl.ListRows(j)
+        End If
+    Next j
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.Calculate
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+    MsgBox "Successfully imported " & importCount & " rows!" & vbCrLf & vbCrLf & _
+           "All calculations have been recalculated automatically.", _
+           vbInformation, "Import Complete"
+    Exit Sub
+
+ErrorHandler:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+    If Not oldWB Is Nothing Then
+        oldWB.Close SaveChanges:=False
+    End If
+
+    MsgBox "Error during import: " & Err.Description & vbCrLf & vbCrLf & _
+           "Import cancelled.", vbExclamation, "Import Error"
 End Sub
 
 Public Sub SaveAdmission(admDate As Date, wardCode As String, _
@@ -2131,11 +2276,13 @@ def create_nav_buttons(wb):
     _add_sheet_button(ws, "btnRefresh", "Control!A17:C17", "ShowRefreshReports")
     _add_sheet_button(ws, "btnExportYearEnd", "Control!A19:C19", "ExportCarryForward")
 
-    # Diagnostic buttons (row 22 and 24 for spacing)
-    ws.Range("A22").Value = "Recalculate All Data"
-    ws.Range("A24").Value = "Verify Calculations"
-    _add_sheet_button(ws, "btnRecalcAll", "Control!A22:C22", "RecalculateAllRows")
-    _add_sheet_button(ws, "btnVerify", "Control!A24:C24", "VerifyCalculations")
+    # Diagnostic buttons (row 22, 24, 26 for spacing)
+    ws.Range("A22").Value = "Import from Old Workbook"
+    ws.Range("A24").Value = "Recalculate All Data"
+    ws.Range("A26").Value = "Verify Calculations"
+    _add_sheet_button(ws, "btnImport", "Control!A22:C22", "ImportFromOldWorkbook")
+    _add_sheet_button(ws, "btnRecalcAll", "Control!A24:C24", "RecalculateAllRows")
+    _add_sheet_button(ws, "btnVerify", "Control!A26:C26", "VerifyCalculations")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
