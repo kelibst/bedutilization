@@ -1,0 +1,19 @@
+{
+  "_comment": "Hospital Preferences for Bed Utilization System",
+  "_instructions": [
+    "Configure hospital-specific behavioral preferences here.",
+    "After making changes, rebuild the workbook using: python build_workbook.py --year YYYY",
+    "Changing preferences mid-year may cause inconsistency between months."
+  ],
+  "version": "1.0",
+  "hospital_name": "HOHOE MUNICIPAL HOSPITAL",
+  "preferences": {
+    "show_emergency_total_remaining": true,
+    "subtract_deaths_under_24hrs_from_admissions": true
+  },
+  "metadata": {
+    "created_date": "2026-02-09",
+    "description": "Hospital-specific configuration preferences for bed utilization tracking"
+  }
+}
+

@@ -65,7 +65,7 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
     c.alignment = CENTER
 
     ws.merge_cells("A2:H2")
-    c = ws.cell(row=2, column=1, value=f"BED UTILIZATION MANAGEMENT SYSTEM - {config.year}")
+    c = ws.cell(row=2, column=1, value="BED UTILIZATION MANAGEMENT SYSTEM")
     c.font = SUBHEADER_FONT
     c.alignment = CENTER
 
@@ -74,24 +74,44 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
     c.font = Font(name="Calibri", bold=True, size=11)
     c.alignment = CENTER
 
-    # Named cells for Year and Hospital
+    # Year and Hospital info (compact, side by side)
     ws.cell(row=5, column=1, value="Year:").font = BOLD_FONT
     ws.cell(row=5, column=2, value=config.year).font = BOLD_FONT
 
     ws.cell(row=5, column=4, value="Hospital:").font = BOLD_FONT
+    ws.merge_cells("E5:H5")
     ws.cell(row=5, column=5, value=config.hospital_name).font = NORMAL_FONT
 
-    # Instructions
+    # Hidden preference storage (for VBA access)
+    ws.cell(row=5, column=10, value=config.preferences.show_emergency_total_remaining)  # J5
+    ws.cell(row=6, column=10, value=config.preferences.subtract_deaths_under_24hrs_from_admissions)  # J6
+    ws.column_dimensions["J"].hidden = True
+
+    # Section header for buttons
     ws.merge_cells("A7:H7")
-    ws.cell(row=7, column=1, value="Use the buttons below to enter data and view reports.").font = NORMAL_FONT
+    c = ws.cell(row=7, column=1, value="DATA ENTRY & REPORTS")
+    c.font = Font(name="Calibri", bold=True, size=12, color="1F4E79")
+    c.alignment = CENTER
 
     # Button placeholders (actual buttons added by phase2 via win32com)
     buttons = [
-        (9,  "[ DAILY BED ENTRY ]",       "Enter daily admissions, discharges, deaths, transfers for each ward"),
+        (9,  "[ DAILY BED ENTRY ]",        "Enter daily admissions, discharges, deaths, transfers for each ward"),
         (11, "[ RECORD ADMISSION ]",       "Record individual patient admission details (for age/gender reports)"),
         (13, "[ RECORD DEATH ]",           "Record individual death details (for deaths report)"),
         (15, "[ RECORD AGES GROUP ]",      "Quick entry for age group admissions (bulk mode)"),
         (17, "[ REFRESH REPORTS ]",        "Update Deaths Report and COD Summary sheets"),
+        (19, "[ MANAGE WARDS ]",           "Add, edit, or delete ward configurations"),
+        (21, "[ EXPORT WARD CONFIG ]",     "Save ward configuration to JSON file for rebuilding"),
+        (23, "[ EXPORT YEAR-END ]",        "Export carry-forward data for next year"),
+        (25, "[ HOSPITAL PREFERENCES ]",   "Configure hospital preferences with user-friendly form"),
+    ]
+    rebuild_button = [
+        (27, "[ REBUILD WORKBOOK ]",       "Automatically rebuild workbook with new preferences (creates backup)"),
+    ]
+    diagnostic_buttons = [
+        (29, "[ IMPORT OLD WORKBOOK ]",    "Import data from previous workbook format"),
+        (31, "[ RECALCULATE ALL DATA ]",   "Recalculate all remaining values"),
+        (33, "[ VERIFY CALCULATIONS ]",    "Verify calculation accuracy"),
     ]
     for row, label, desc in buttons:
         ws.merge_cells(f"A{row}:C{row}")
@@ -102,9 +122,34 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
         c.border = THIN_BORDER
         ws.cell(row=row, column=4, value=desc).font = NORMAL_FONT
 
+    # Rebuild button (special warning color)
+    for row, label, desc in rebuild_button:
+        ws.merge_cells(f"A{row}:C{row}")
+        c = ws.cell(row=row, column=1, value=label)
+        c.font = Font(name="Calibri", bold=True, size=11, color="FFFFFF")  # White text
+        c.alignment = CENTER
+        c.fill = PatternFill(start_color="FF6600", end_color="FF6600", fill_type="solid")  # Orange
+        c.border = THIN_BORDER
+        ws.cell(row=row, column=4, value=desc).font = NORMAL_FONT
+
+    for row, label, desc in diagnostic_buttons:
+        ws.merge_cells(f"A{row}:C{row}")
+        c = ws.cell(row=row, column=1, value=label)
+        c.font = Font(name="Calibri", bold=True, size=10, color="808080")
+        c.alignment = CENTER
+        c.fill = PatternFill(start_color="F0F0F0", end_color="F0F0F0", fill_type="solid")
+        c.border = THIN_BORDER
+        ws.cell(row=row, column=4, value=desc).font = NORMAL_FONT
+
     # ── Ward Configuration Table ─────────────────────────────────────────
-    config_start = 18
-    ws.cell(row=config_start, column=1, value="WARD CONFIGURATION").font = SUBHEADER_FONT
+    config_start = 35  # Row for section header (after all buttons)
+
+    # Section header for ward configuration
+    ws.merge_cells(f"A{config_start}:F{config_start}")
+    c = ws.cell(row=config_start, column=1, value="WARD CONFIGURATION")
+    c.font = Font(name="Calibri", bold=True, size=12, color="1F4E79")
+    c.alignment = CENTER
+    c.fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
 
     headers = ["WardCode", "WardName", "BedComplement", "PrevYearRemaining", "IsEmergency", "DisplayOrder"]
     for col, h in enumerate(headers, 1):
@@ -131,8 +176,52 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
     tbl.tableStyleInfo = TABLE_STYLE
     ws.add_table(tbl)
 
+    # ── Preferences Configuration Table ──────────────────────────────────
+    prefs_start = end_row + 2  # end_row from tblWardConfig
+
+    # Section header
+    ws.merge_cells(f"A{prefs_start}:F{prefs_start}")
+    c = ws.cell(row=prefs_start, column=1, value="HOSPITAL PREFERENCES CONFIGURATION")
+    c.font = Font(name="Calibri", bold=True, size=12, color="1F4E79")
+    c.alignment = CENTER
+    c.fill = PatternFill(start_color="E7E6E6", end_color="E7E6E6", fill_type="solid")
+
+    # Headers
+    pref_headers = ["PreferenceKey", "PreferenceValue", "Description"]
+    for col, h in enumerate(pref_headers, 1):
+        c = ws.cell(row=prefs_start + 1, column=col, value=h)
+        c.font = HEADER_FONT_WHITE
+        c.fill = HEADER_FILL
+        c.alignment = CENTER
+        c.border = THIN_BORDER
+
+    # Data rows
+    pref_rows = [
+        ("show_emergency_total_remaining",
+         config.preferences.show_emergency_total_remaining,
+         "Show 'Emergency Total Remaining' row in Monthly Summary"),
+        ("subtract_deaths_under_24hrs_from_admissions",
+         config.preferences.subtract_deaths_under_24hrs_from_admissions,
+         "Subtract deaths under 24hrs from monthly admission totals")
+    ]
+
+    for idx, (key, value, desc) in enumerate(pref_rows, prefs_start + 2):
+        ws.cell(row=idx, column=1, value=key).font = NORMAL_FONT
+        ws.cell(row=idx, column=2, value=value).font = NORMAL_FONT  # Boolean
+        ws.cell(row=idx, column=3, value=desc).font = NORMAL_FONT
+        for col in range(1, 4):
+            ws.cell(row=idx, column=col).alignment = CENTER
+            ws.cell(row=idx, column=col).border = THIN_BORDER
+
+    # Create table
+    prefs_end = prefs_start + 1 + len(pref_rows)
+    prefs_tab_ref = f"A{prefs_start + 1}:C{prefs_end}"
+    prefs_tbl = Table(displayName="tblPreferences", ref=prefs_tab_ref)
+    prefs_tbl.tableStyleInfo = TABLE_STYLE
+    ws.add_table(prefs_tbl)
+
     # ── Month Lookup Table ───────────────────────────────────────────────
-    month_start = end_row + 2
+    month_start = prefs_end + 2  # CHANGED from: month_start = end_row + 2
     ws.cell(row=month_start, column=1, value="MONTH LOOKUP").font = SUBHEADER_FONT
 
     month_headers = ["MonthNum", "MonthName", "DaysInMonth"]
@@ -311,14 +400,14 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
 
         # ── Header block ─────────────────────────────────────────────
         ws.merge_cells(start_row=current_row, start_column=1,
-                       end_row=current_row, end_column=8)
+                       end_row=current_row, end_column=7)
         c = ws.cell(row=current_row, column=1, value="GHANA HEALTH SERVICE")
         c.font = HEADER_FONT
         c.alignment = CENTER
         current_row += 1
 
         ws.merge_cells(start_row=current_row, start_column=1,
-                       end_row=current_row, end_column=8)
+                       end_row=current_row, end_column=7)
         c = ws.cell(row=current_row, column=1, value="DAILY BED UTILIZATION FORM")
         c.font = SUBHEADER_FONT
         c.alignment = CENTER
@@ -371,7 +460,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
         col_headers = [
             "Day of\nthe\nMonth", "Admissions", "Discharges", "Deaths",
             "Deaths\n<24Hrs", "Transfers-\nIn", "Transfers-\nOut",
-            "No. of Patients\nRemaining In\nWard", "Malaria\nCases"
+            "No. of Patients\nRemaining In\nWard"
         ]
         for col, header in enumerate(col_headers, 1):
             c = ws.cell(row=current_row, column=col, value=header)
@@ -392,7 +481,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
             if day <= days:
                 date_ref = f"DATE({config.year},{month_num},{day})"
                 fields = ["Admissions", "Discharges", "Deaths",
-                           "DeathsUnder24Hrs", "TransfersIn", "TransfersOut", "Remaining", "MalariaCases"]
+                           "DeathsUnder24Hrs", "TransfersIn", "TransfersOut", "Remaining"]
                 for col_idx, field_name in enumerate(fields, 2):
                     formula = (
                         f'=IFERROR(IF(SUMIFS(tblDaily[{field_name}],'
@@ -407,7 +496,7 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
                     c.alignment = CENTER
                     c.border = THIN_BORDER
             else:
-                for col_idx in range(2, 10):
+                for col_idx in range(2, 9):
                     c = ws.cell(row=current_row, column=col_idx)
                     c.fill = GRAY_FILL
                     c.border = THIN_BORDER
@@ -422,13 +511,24 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
         c.border = THIN_BORDER
 
         total_fields = ["Admissions", "Discharges", "Deaths",
-                        "DeathsUnder24Hrs", "TransfersIn", "TransfersOut", "MalariaCases"]
+                        "DeathsUnder24Hrs", "TransfersIn", "TransfersOut"]
         for col_idx, field_name in enumerate(total_fields, 2):
-            formula = (
-                f'=SUMIFS(tblDaily[{field_name}],'
-                f'tblDaily[Month],{month_num},'
-                f'tblDaily[WardCode],"{ward.code}")'
-            )
+            if field_name == "Admissions" and config.preferences.subtract_deaths_under_24hrs_from_admissions:
+                # Adjusted admissions = Admissions - Deaths<24Hrs
+                formula = (
+                    f'=SUMIFS(tblDaily[Admissions],'
+                    f'tblDaily[Month],{month_num},'
+                    f'tblDaily[WardCode],"{ward.code}") - '
+                    f'SUMIFS(tblDaily[DeathsUnder24Hrs],'
+                    f'tblDaily[Month],{month_num},'
+                    f'tblDaily[WardCode],"{ward.code}")'
+                )
+            else:
+                formula = (
+                    f'=SUMIFS(tblDaily[{field_name}],'
+                    f'tblDaily[Month],{month_num},'
+                    f'tblDaily[WardCode],"{ward.code}")'
+                )
             c = ws.cell(row=current_row, column=col_idx, value=formula)
             c.font = BOLD_FONT
             c.alignment = CENTER
@@ -458,7 +558,6 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
     ws.column_dimensions["F"].width = 12
     ws.column_dimensions["G"].width = 12
     ws.column_dimensions["H"].width = 16
-    ws.column_dimensions["I"].width = 12  # Malaria Cases
 
     # Print setup
     ws.page_setup.orientation = "portrait"
@@ -547,7 +646,12 @@ def build_monthly_summary_sheet(wb: Workbook, config: WorkbookConfig):
                 4: "Admissions", 5: "Discharges", 6: "Deaths", 7: "DeathsUnder24Hrs"
             }
             for col_num, field in daily_fields.items():
-                f = f'=SUMIFS(tblDaily[{field}],tblDaily[Month],{month_num},tblDaily[WardCode],"{wc}")'
+                if field == "Admissions" and config.preferences.subtract_deaths_under_24hrs_from_admissions:
+                    # Adjusted admissions = Admissions - Deaths<24Hrs
+                    f = (f'=SUMIFS(tblDaily[Admissions],tblDaily[Month],{month_num},tblDaily[WardCode],"{wc}") - '
+                         f'SUMIFS(tblDaily[DeathsUnder24Hrs],tblDaily[Month],{month_num},tblDaily[WardCode],"{wc}")')
+                else:
+                    f = f'=SUMIFS(tblDaily[{field}],tblDaily[Month],{month_num},tblDaily[WardCode],"{wc}")'
                 ws.cell(row=r, column=col_num, value=f).font = NORMAL_FONT
 
             # Col H: Patient Days
@@ -590,14 +694,46 @@ def build_monthly_summary_sheet(wb: Workbook, config: WorkbookConfig):
 
             current_row += 1
 
+        # ── EMERGENCY TOTAL REMAINING row ────────────────────────────
+        if config.preferences.show_emergency_total_remaining:
+            r = current_row
+            ws.cell(row=r, column=1, value="EMERGENCY TOTAL REMAINING").font = BOLD_FONT
+            ws.cell(row=r, column=1).fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
+
+            # Calculate last day of month
+            last_day = config.days_in_month(month_num)
+            date_formula = f'DATE({config.year},{month_num},{last_day})'
+
+            # Sum remaining for all emergency wards on last day
+            emer_wards = [w for w in config.WARDS if w.is_emergency]
+            parts = []
+            for ew in emer_wards:
+                parts.append(f'SUMIFS(tblDaily[Remaining],tblDaily[EntryDate],{date_formula},tblDaily[WardCode],"{ew.code}")')
+
+            # Column B: Total remaining at end of month
+            ws.cell(row=r, column=2, value=f'={"+".join(parts)}').font = BOLD_FONT
+
+            # Columns C-P: Empty
+            for col in range(3, 17):
+                ws.cell(row=r, column=col, value="")
+                ws.cell(row=r, column=col).fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
+
+            # Borders
+            for col in range(1, 17):
+                ws.cell(row=r, column=col).alignment = CENTER
+                ws.cell(row=r, column=col).border = THIN_BORDER
+
+            current_row += 1
+
         # ── TOTAL row ────────────────────────────────────────────────
         r = current_row
         ws.cell(row=r, column=1, value="TOTAL").font = BOLD_FONT
         ws.cell(row=r, column=1).fill = TOTAL_FILL
 
         # Sum columns B through J across the ward rows
-        first_ward_row = r - len(config.WARDS)
-        last_ward_row = r - 1
+        emergency_offset = 1 if config.preferences.show_emergency_total_remaining else 0
+        first_ward_row = r - len(config.WARDS) - emergency_offset
+        last_ward_row = r - 1 - emergency_offset
         for col in range(2, 11):
             cl = get_column_letter(col)
             ws.cell(row=r, column=col,
@@ -924,7 +1060,12 @@ def build_statement_of_inpatient_sheet(wb: Workbook, config: WorkbookConfig):
         ws.cell(row=r, column=3, value=f_bc).font = NORMAL_FONT
         
         # D-G, I-J: Sums
-        ws.cell(row=r, column=4, value=f'=SUMIFS(tblDaily[Admissions],tblDaily[WardCode],"{wc}")')
+        if config.preferences.subtract_deaths_under_24hrs_from_admissions:
+            adm_formula = f'=SUMIFS(tblDaily[Admissions],tblDaily[WardCode],"{wc}") - SUMIFS(tblDaily[DeathsUnder24Hrs],tblDaily[WardCode],"{wc}")'
+        else:
+            adm_formula = f'=SUMIFS(tblDaily[Admissions],tblDaily[WardCode],"{wc}")'
+
+        ws.cell(row=r, column=4, value=adm_formula)
         ws.cell(row=r, column=5, value=f'=SUMIFS(tblDaily[Discharges],tblDaily[WardCode],"{wc}")')
         ws.cell(row=r, column=6, value=f'=SUMIFS(tblDaily[Deaths],tblDaily[WardCode],"{wc}")')
         ws.cell(row=r, column=7, value=f'=SUMIFS(tblDaily[DeathsUnder24Hrs],tblDaily[WardCode],"{wc}")')

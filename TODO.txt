@@ -1,0 +1,11 @@
+Give the option to remove <24 hour deaths from the actual death.
+Update the app so that users can migrate from any excel format to this new one,.
+✅ DONE - Removed malaria cell from all ward entry sheets
+✅ DONE - Implemented user-manageable ward configuration system (wards_config.json)
+   - Users can now add/update wards by editing wards_config.json
+   - See WARD_CONFIGURATION_GUIDE.md for instructions
+   - Ward changes automatically reflect in all generated reports
+
+because <24 hour deaths are not being counted, we should include the option for the user to add a calculation to remove it from the total admission at the end 
+of every months and for each ward. evaluate this carefully before you implement it.
+

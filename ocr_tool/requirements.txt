@@ -1,0 +1,15 @@
+# OCR and ML
+transformers>=4.35.0
+torch>=2.0.0
+pillow>=10.0.0
+
+# Image processing
+opencv-python>=4.8.0
+numpy>=1.24.0
+
+# Data processing
+pandas>=2.0.0
+
+# Optional: GPU support (uncomment if you have NVIDIA GPU)
+# torchvision>=0.15.0
+# --extra-index-url https://download.pytorch.org/whl/cu118

@@ -1,0 +1,73 @@
+{
+  "_comment": "Ward Configuration for Bed Utilization System",
+  "_instructions": [
+    "To add a new ward, copy an existing ward entry and modify the values.",
+    "After making changes, save this file and rebuild the workbook."
+  ],
+  "wards": [
+    {
+      "code": "MW",
+      "name": "Male Medical",
+      "bed_complement": 32,
+      "is_emergency": false,
+      "display_order": 1
+    },
+    {
+      "code": "FW",
+      "name": "Female Medical",
+      "bed_complement": 28,
+      "is_emergency": false,
+      "display_order": 2
+    },
+    {
+      "code": "CW",
+      "name": "Paediatric",
+      "bed_complement": 27,
+      "is_emergency": false,
+      "display_order": 3
+    },
+    {
+      "code": "BF",
+      "name": "Block F",
+      "bed_complement": 20,
+      "is_emergency": false,
+      "display_order": 4
+    },
+    {
+      "code": "BG",
+      "name": "Block G",
+      "bed_complement": 14,
+      "is_emergency": false,
+      "display_order": 5
+    },
+    {
+      "code": "BH",
+      "name": "Block H",
+      "bed_complement": 22,
+      "is_emergency": false,
+      "display_order": 6
+    },
+    {
+      "code": "NICU",
+      "name": "Neonatal",
+      "bed_complement": 15,
+      "is_emergency": false,
+      "display_order": 7
+    },
+    {
+      "code": "MAE",
+      "name": "Male Emergency",
+      "bed_complement": 10,
+      "is_emergency": true,
+      "display_order": 8
+    },
+    {
+      "code": "FAE",
+      "name": "Female Emergency",
+      "bed_complement": 10,
+      "is_emergency": true,
+      "display_order": 9
+    }
+  ]
+}
+

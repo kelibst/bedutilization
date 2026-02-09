@@ -15,20 +15,79 @@ VBA_MOD_CONFIG = '''
 Option Explicit
 
 Public Const HOSPITAL_NAME As String = "HOHOE MUNICIPAL HOSPITAL"
-Public Const NUM_WARDS As Long = 9
+
+' Dynamic ward configuration - reads from tblWardConfig table
+Public Function GetWardCount() As Long
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+    GetWardCount = tbl.ListRows.Count
+End Function
 
 Public Function GetWardCodes() As Variant
-    GetWardCodes = Array("MW", "FW", "CW", "BF", "BG", "BH", "NICU", "MAE", "FAE")
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+
+    Dim codes() As String
+    ReDim codes(0 To tbl.ListRows.Count - 1)  ' 0-based for ComboBox compatibility
+
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        codes(i - 1) = tbl.ListRows(i).Range(1, 1).Value  ' WardCode column
+    Next i
+
+    GetWardCodes = codes
 End Function
 
 Public Function GetWardNames() As Variant
-    GetWardNames = Array("Male Medical", "Female Medical", "Paediatric", _
-        "Block F", "Block G", "Block H", "Neonatal", "Male Emergency", "Female Emergency")
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+
+    Dim names() As String
+    ReDim names(0 To tbl.ListRows.Count - 1)  ' 0-based for ComboBox compatibility
+
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        names(i - 1) = tbl.ListRows(i).Range(1, 2).Value  ' WardName column
+    Next i
+
+    GetWardNames = names
+End Function
+
+Public Function GetWardByCode(wardCode As String) As Variant
+    ' Returns array: (code, name, bedComplement, prevYearRemaining, isEmergency, displayOrder)
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        If tbl.ListRows(i).Range(1, 1).Value = wardCode Then
+            Dim ward(1 To 6) As Variant
+            ward(1) = tbl.ListRows(i).Range(1, 1).Value  ' Code
+            ward(2) = tbl.ListRows(i).Range(1, 2).Value  ' Name
+            ward(3) = tbl.ListRows(i).Range(1, 3).Value  ' BedComplement
+            ward(4) = tbl.ListRows(i).Range(1, 4).Value  ' PrevYearRemaining
+            ward(5) = tbl.ListRows(i).Range(1, 5).Value  ' IsEmergency
+            ward(6) = tbl.ListRows(i).Range(1, 6).Value  ' DisplayOrder
+            GetWardByCode = ward
+            Exit Function
+        End If
+    Next i
+
+    GetWardByCode = Null
 End Function
 
 Public Function GetReportYear() As Long
     GetReportYear = ThisWorkbook.Sheets("Control").Range("B5").Value
 End Function
+
+Public Sub ShowPreferencesInfo()
+    ' Open preferences manager form
+    frmPreferencesManager.Show
+End Sub
+
+Public Sub ExportPreferencesConfigButton()
+    ExportPreferencesConfig
+End Sub
 '''
 
 VBA_MOD_DATA_ACCESS = '''
@@ -440,11 +499,37 @@ Public Sub ImportFromOldWorkbook()
     Dim oldWB As Workbook
     Set oldWB = Workbooks.Open(oldPath, ReadOnly:=True, UpdateLinks:=False)
 
-    ' Get old DailyData table
+    ' Verify old workbook has DailyData sheet
     Dim oldWS As Worksheet
+    On Error Resume Next
     Set oldWS = oldWB.Sheets("DailyData")
+    On Error GoTo ErrorHandler
+
+    If oldWS Is Nothing Then
+        MsgBox "The selected workbook does not have a 'DailyData' sheet." & vbCrLf & _
+               "Please select a valid Bed Utilization workbook.", vbExclamation
+        oldWB.Close SaveChanges:=False
+        Application.Calculation = xlCalculationAutomatic
+        Application.ScreenUpdating = True
+        Application.EnableEvents = True
+        Exit Sub
+    End If
+
+    ' Verify old workbook has tblDaily table
     Dim oldTbl As ListObject
+    On Error Resume Next
     Set oldTbl = oldWS.ListObjects("tblDaily")
+    On Error GoTo ErrorHandler
+
+    If oldTbl Is Nothing Then
+        MsgBox "The DailyData sheet does not have a 'tblDaily' table." & vbCrLf & _
+               "Please select a valid Bed Utilization workbook.", vbExclamation
+        oldWB.Close SaveChanges:=False
+        Application.Calculation = xlCalculationAutomatic
+        Application.ScreenUpdating = True
+        Application.EnableEvents = True
+        Exit Sub
+    End If
 
     ' Get new DailyData table
     Dim newWS As Worksheet
@@ -924,6 +1009,14 @@ End Sub
 Public Sub ShowRefreshReports()
     RefreshAllReports
 End Sub
+
+Public Sub ShowWardManager()
+    frmWardManager.Show
+End Sub
+
+Public Sub ExportWardConfig()
+    ExportWardsConfig
+End Sub
 '''
 
 VBA_MOD_YEAREND = '''
@@ -991,6 +1084,296 @@ Public Sub ExportCarryForward()
 
     MsgBox "Carry-forward data exported to:" & vbCrLf & filePath, vbInformation, "Year-End Export"
 End Sub
+
+' Export current ward configuration to wards_config.json
+Public Sub ExportWardsConfig()
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+
+    ' Build JSON structure
+    Dim jsonStr As String
+    jsonStr = "{" & vbCrLf
+    jsonStr = jsonStr & "  ""_comment"": ""Ward Configuration for Bed Utilization System""," & vbCrLf
+    jsonStr = jsonStr & "  ""_instructions"": [" & vbCrLf
+    jsonStr = jsonStr & "    ""To add a new ward, copy an existing ward entry and modify the values.""," & vbCrLf
+    jsonStr = jsonStr & "    ""After making changes, save this file and rebuild the workbook.""" & vbCrLf
+    jsonStr = jsonStr & "  ]," & vbCrLf
+    jsonStr = jsonStr & "  ""wards"": [" & vbCrLf
+
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        jsonStr = jsonStr & "    {" & vbCrLf
+        jsonStr = jsonStr & "      ""code"": """ & tbl.ListRows(i).Range(1, 1).Value & """," & vbCrLf
+        jsonStr = jsonStr & "      ""name"": """ & tbl.ListRows(i).Range(1, 2).Value & """," & vbCrLf
+        jsonStr = jsonStr & "      ""bed_complement"": " & tbl.ListRows(i).Range(1, 3).Value & "," & vbCrLf
+
+        Dim isEmerg As Boolean
+        isEmerg = tbl.ListRows(i).Range(1, 5).Value
+        jsonStr = jsonStr & "      ""is_emergency"": " & LCase(CStr(isEmerg)) & "," & vbCrLf
+        jsonStr = jsonStr & "      ""display_order"": " & tbl.ListRows(i).Range(1, 6).Value & vbCrLf
+        jsonStr = jsonStr & "    }"
+        If i < tbl.ListRows.Count Then jsonStr = jsonStr & ","
+        jsonStr = jsonStr & vbCrLf
+    Next i
+
+    jsonStr = jsonStr & "  ]" & vbCrLf
+    jsonStr = jsonStr & "}" & vbCrLf
+
+    ' Save to wards_config.json
+    Dim filePath As String
+    filePath = ThisWorkbook.Path & "\\wards_config.json"
+
+    Dim fNum As Integer
+    fNum = FreeFile
+    Open filePath For Output As #fNum
+    Print #fNum, jsonStr
+    Close #fNum
+
+    MsgBox "Ward configuration exported to:" & vbCrLf & filePath & vbCrLf & vbCrLf & _
+           "To apply changes, rebuild the workbook:" & vbCrLf & _
+           "python build_workbook.py --year " & GetReportYear(), _
+           vbInformation, "Export Ward Configuration"
+End Sub
+
+Public Sub ExportPreferencesConfig()
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblPreferences")
+
+    ' Read current values from table
+    Dim showEmergencyRemaining As Boolean
+    Dim subtractDeaths As Boolean
+
+    ' Find rows by key (flexible ordering)
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        Dim key As String
+        key = Trim(CStr(tbl.ListRows(i).Range(1, 1).Value))
+
+        If key = "show_emergency_total_remaining" Then
+            showEmergencyRemaining = CBool(tbl.ListRows(i).Range(1, 2).Value)
+        ElseIf key = "subtract_deaths_under_24hrs_from_admissions" Then
+            subtractDeaths = CBool(tbl.ListRows(i).Range(1, 2).Value)
+        End If
+    Next i
+
+    ' Build JSON structure with proper formatting
+    Dim jsonStr As String
+    jsonStr = "{" & vbCrLf
+    jsonStr = jsonStr & "  ""_comment"": ""Hospital Preferences for Bed Utilization System""," & vbCrLf
+    jsonStr = jsonStr & "  ""_instructions"": [" & vbCrLf
+    jsonStr = jsonStr & "    ""Configure hospital-specific behavioral preferences here.""," & vbCrLf
+    jsonStr = jsonStr & "    ""After making changes, rebuild the workbook using: python build_workbook.py --year YYYY""," & vbCrLf
+    jsonStr = jsonStr & "    ""Changing preferences mid-year may cause inconsistency between months.""" & vbCrLf
+    jsonStr = jsonStr & "  ]," & vbCrLf
+    jsonStr = jsonStr & "  ""version"": ""1.0""," & vbCrLf
+    jsonStr = jsonStr & "  ""hospital_name"": ""HOHOE MUNICIPAL HOSPITAL""," & vbCrLf
+    jsonStr = jsonStr & "  ""preferences"": {" & vbCrLf
+    jsonStr = jsonStr & "    ""show_emergency_total_remaining"": " & LCase(CStr(showEmergencyRemaining)) & "," & vbCrLf
+    jsonStr = jsonStr & "    ""subtract_deaths_under_24hrs_from_admissions"": " & LCase(CStr(subtractDeaths)) & vbCrLf
+    jsonStr = jsonStr & "  }," & vbCrLf
+    jsonStr = jsonStr & "  ""metadata"": {" & vbCrLf
+    jsonStr = jsonStr & "    ""created_date"": """ & Format(Date, "yyyy-mm-dd") & """," & vbCrLf
+    jsonStr = jsonStr & "    ""description"": ""Hospital-specific configuration preferences for bed utilization tracking""" & vbCrLf
+    jsonStr = jsonStr & "  }" & vbCrLf
+    jsonStr = jsonStr & "}" & vbCrLf
+
+    ' Save to hospital_preferences.json
+    Dim filePath As String
+    filePath = ThisWorkbook.Path & "\\hospital_preferences.json"
+
+    On Error GoTo ErrorHandler
+    Dim fNum As Integer
+    fNum = FreeFile
+    Open filePath For Output As #fNum
+    Print #fNum, jsonStr
+    Close #fNum
+
+    ' Success message with rebuild instructions
+    MsgBox "Hospital preferences exported to:" & vbCrLf & filePath & vbCrLf & vbCrLf & _
+           "IMPORTANT: These changes will NOT take effect until you rebuild the workbook:" & vbCrLf & _
+           "python build_workbook.py --year " & GetReportYear() & vbCrLf & vbCrLf & _
+           "Preferences affect formulas and report structure, so rebuilding is required.", _
+           vbInformation, "Export Hospital Preferences"
+    Exit Sub
+
+ErrorHandler:
+    MsgBox "Error exporting preferences: " & Err.Description, vbCritical, "Export Error"
+End Sub
+
+Private Function CheckRebuildPrerequisites() As String
+    ' Returns empty string if all checks pass, otherwise returns error message
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+
+    ' Check if build_workbook.py exists
+    Dim buildScript As String
+    buildScript = ThisWorkbook.Path & "\\build_workbook.py"
+    If Not fso.FileExists(buildScript) Then
+        CheckRebuildPrerequisites = "ERROR: build_workbook.py not found in workbook directory." & vbCrLf & _
+                                    "Expected: " & buildScript
+        Exit Function
+    End If
+
+    ' Check if Python is available
+    Dim shell As Object
+    Set shell = CreateObject("WScript.Shell")
+    Dim tempFile As String
+    tempFile = Environ("TEMP") & "\\python_check.txt"
+
+    On Error Resume Next
+    shell.Run "cmd /c python --version > """ & tempFile & """ 2>&1", 0, True
+    On Error GoTo 0
+
+    ' Read the result
+    If fso.FileExists(tempFile) Then
+        Dim ts As Object
+        Set ts = fso.OpenTextFile(tempFile, 1)
+        Dim pythonVersion As String
+        If Not ts.AtEndOfStream Then
+            pythonVersion = ts.ReadLine
+        End If
+        ts.Close
+        fso.DeleteFile tempFile
+
+        If InStr(LCase(pythonVersion), "python") = 0 Then
+            CheckRebuildPrerequisites = "ERROR: Python not found or not in PATH." & vbCrLf & _
+                                       "Please install Python and add it to your system PATH."
+            Exit Function
+        End If
+    Else
+        CheckRebuildPrerequisites = "ERROR: Unable to check Python installation."
+        Exit Function
+    End If
+
+    ' Check if config files exist
+    Dim wardsConfig As String
+    wardsConfig = ThisWorkbook.Path & "\\wards_config.json"
+    If Not fso.FileExists(wardsConfig) Then
+        CheckRebuildPrerequisites = "ERROR: wards_config.json not found." & vbCrLf & _
+                                    "Please export ward configuration first."
+        Exit Function
+    End If
+
+    ' All checks passed
+    CheckRebuildPrerequisites = ""
+End Function
+
+Public Sub RebuildWorkbookWithPreferences()
+    ' Automated workbook rebuild with data preservation
+    On Error GoTo ErrorHandler
+
+    ' Step 1: Check prerequisites
+    Dim prereqCheck As String
+    prereqCheck = CheckRebuildPrerequisites()
+    If prereqCheck <> "" Then
+        MsgBox prereqCheck, vbCritical, "Rebuild Prerequisites Failed"
+        Exit Sub
+    End If
+
+    ' Step 2: Confirm with user
+    Dim userResponse As VbMsgBoxResult
+    userResponse = MsgBox("This will rebuild the workbook with new preferences." & vbCrLf & vbCrLf & _
+                         "Steps:" & vbCrLf & _
+                         "1. Current workbook will be backed up" & vbCrLf & _
+                         "2. Preferences will be exported to JSON" & vbCrLf & _
+                         "3. Workbook will be rebuilt with Python" & vbCrLf & _
+                         "4. You can import data from backup" & vbCrLf & vbCrLf & _
+                         "Continue?", _
+                         vbQuestion + vbYesNo, "Rebuild Workbook")
+    If userResponse <> vbYes Then Exit Sub
+
+    ' Step 3: Export preferences first
+    Call ExportPreferencesConfig
+
+    ' Step 4: Create backup of current workbook
+    Dim fso As Object
+    Set fso = CreateObject("Scripting.FileSystemObject")
+
+    Dim currentPath As String
+    Dim backupPath As String
+    Dim timestamp As String
+    currentPath = ThisWorkbook.FullName
+    timestamp = Format(Now, "yyyymmdd_hhnnss")
+    backupPath = Replace(currentPath, ".xlsm", "_backup_" & timestamp & ".xlsm")
+
+    Application.DisplayAlerts = False
+    ThisWorkbook.SaveCopyAs backupPath
+    Application.DisplayAlerts = True
+
+    ' Step 5: Run Python rebuild
+    Dim shell As Object
+    Set shell = CreateObject("WScript.Shell")
+
+    Dim buildCmd As String
+    Dim yearVal As String
+    yearVal = CStr(GetReportYear())
+    buildCmd = "cmd /c cd /d """ & ThisWorkbook.Path & """ && python build_workbook.py --year " & yearVal
+
+    ' Create a log file for the build process
+    Dim logFile As String
+    logFile = ThisWorkbook.Path & "\\rebuild_log.txt"
+    buildCmd = buildCmd & " > """ & logFile & """ 2>&1"
+
+    ' Show progress message
+    Application.StatusBar = "Rebuilding workbook... Please wait..."
+
+    ' Run the command and wait
+    Dim exitCode As Long
+    exitCode = shell.Run(buildCmd, 0, True)
+
+    Application.StatusBar = False
+
+    ' Step 6: Check results
+    If exitCode = 0 Then
+        ' Success
+        MsgBox "Rebuild successful!" & vbCrLf & vbCrLf & _
+               "Backup saved to:" & vbCrLf & backupPath & vbCrLf & vbCrLf & _
+               "NEXT STEPS:" & vbCrLf & _
+               "1. This workbook will close" & vbCrLf & _
+               "2. Open the new Bed_Utilization_" & yearVal & ".xlsm" & vbCrLf & _
+               "3. Click 'IMPORT OLD WORKBOOK' button" & vbCrLf & _
+               "4. Select the backup file to restore your data", _
+               vbInformation, "Rebuild Complete"
+
+        ' Close current workbook without saving (backup already created)
+        ThisWorkbook.Close SaveChanges:=False
+    Else
+        ' Failed - read log file
+        Dim errorMsg As String
+        errorMsg = "Rebuild FAILED (Exit code: " & exitCode & ")" & vbCrLf & vbCrLf
+
+        If fso.FileExists(logFile) Then
+            Dim ts As Object
+            Set ts = fso.OpenTextFile(logFile, 1)
+            Dim logContent As String
+            logContent = ts.ReadAll
+            ts.Close
+
+            ' Show last 500 characters of log
+            If Len(logContent) > 500 Then
+                logContent = "..." & Right(logContent, 500)
+            End If
+            errorMsg = errorMsg & "Build log:" & vbCrLf & logContent
+        Else
+            errorMsg = errorMsg & "No log file generated."
+        End If
+
+        MsgBox errorMsg, vbCritical, "Rebuild Failed"
+
+        ' Keep current workbook open
+        ' User can try again or manually fix issues
+    End If
+
+    Exit Sub
+
+ErrorHandler:
+    Application.StatusBar = False
+    Application.DisplayAlerts = True
+    MsgBox "Error during rebuild: " & Err.Description & vbCrLf & vbCrLf & _
+           "Your current workbook was not modified." & vbCrLf & _
+           "Backup file: " & backupPath, _
+           vbCritical, "Rebuild Error"
+End Sub
 '''
 
 # ─── UserForm Code ───────────────────────────────────────────────────────────
@@ -1051,6 +1434,82 @@ Private Sub UserForm_Initialize()
     isLoading = False
     UpdatePrevRemaining
     CheckExistingEntry
+    UpdateRecentList
+End Sub
+
+Private Sub UpdateRecentList()
+    lstRecent.Clear
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
+
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim i As Long
+    For i = startRow To tbl.ListRows.Count
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
+           tbl.ListRows(i).Range(1, 1).Value <> "" Then
+            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
+                tbl.ListRows(i).Range(1, 2).Value & " | " & _
+                "Adm:" & tbl.ListRows(i).Range(1, 4).Value & _
+                " Dis:" & tbl.ListRows(i).Range(1, 5).Value & _
+                " Rem:" & tbl.ListRows(i).Range(1, 11).Value
+        End If
+    Next i
+End Sub
+
+Private Sub lstRecent_Click()
+    If lstRecent.ListIndex < 0 Then Exit Sub
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
+
+    ' Calculate actual row (last 10 entries)
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim actualRow As Long
+    actualRow = startRow + lstRecent.ListIndex
+
+    If actualRow > tbl.ListRows.Count Then Exit Sub
+
+    isLoading = True ' Prevent change events while loading
+
+    ' Load the selected entry
+    Dim entryDate As Date
+    entryDate = tbl.ListRows(actualRow).Range(1, 1).Value
+
+    cmbMonth.ListIndex = Month(entryDate) - 1
+    spnDay.Value = Day(entryDate)
+    txtDay.Value = CStr(Day(entryDate))
+
+    ' Load ward
+    Dim wc As String
+    wc = tbl.ListRows(actualRow).Range(1, 2).Value
+    Dim j As Long
+    For j = 0 To UBound(wardCodes)
+        If wardCodes(j) = wc Then
+            cmbWard.ListIndex = j
+            Exit For
+        End If
+    Next j
+
+    ' Load data fields
+    txtAdmissions.Value = CStr(tbl.ListRows(actualRow).Range(1, 4).Value)
+    txtDischarges.Value = CStr(tbl.ListRows(actualRow).Range(1, 5).Value)
+    txtDeaths.Value = CStr(tbl.ListRows(actualRow).Range(1, 6).Value)
+    txtDeaths24.Value = CStr(tbl.ListRows(actualRow).Range(1, 7).Value)
+    txtTransIn.Value = CStr(tbl.ListRows(actualRow).Range(1, 8).Value)
+    txtTransOut.Value = CStr(tbl.ListRows(actualRow).Range(1, 9).Value)
+
+    isLoading = False
+    UpdatePrevRemaining
+    CalculateRemaining
+    lblStatus.Caption = "Loaded entry for editing"
+    lblStatus.ForeColor = &H0080FF ' Orange
+    isDirty = False
 End Sub
 
 Private Sub cmbWard_Change()
@@ -1284,6 +1743,7 @@ End Sub
 Private Sub btnSaveNext_Click()
     If SaveCurrentEntry() Then
         isDirty = False
+        UpdateRecentList
         ' Move to next ward - preserve current ward index first
         Dim nextIdx As Long
         nextIdx = cmbWard.ListIndex + 1
@@ -1304,6 +1764,7 @@ End Sub
 Private Sub btnSaveNextDay_Click()
     If SaveCurrentEntry() Then
         isDirty = False
+        UpdateRecentList
         ' Advance date to next day and reset to first ward
         isLoading = True
         Dim maxDay As Long
@@ -1395,6 +1856,79 @@ Private Sub UserForm_Initialize()
     txtPatientName.Value = ""
     optMale.Value = True
     optInsured.Value = True
+    UpdateRecentList
+End Sub
+
+Private Sub UpdateRecentList()
+    lstRecent.Clear
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim i As Long
+    For i = startRow To tbl.ListRows.Count
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
+           tbl.ListRows(i).Range(1, 1).Value <> "" Then
+            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
+                tbl.ListRows(i).Range(1, 6).Value & " | " & _
+                tbl.ListRows(i).Range(1, 4).Value & " | Age: " & _
+                tbl.ListRows(i).Range(1, 7).Value
+        End If
+    Next i
+End Sub
+
+Private Sub lstRecent_Click()
+    If lstRecent.ListIndex < 0 Then Exit Sub
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    ' Calculate actual row (last 10 entries)
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim actualRow As Long
+    actualRow = startRow + lstRecent.ListIndex
+
+    If actualRow > tbl.ListRows.Count Then Exit Sub
+
+    ' Load the selected entry
+    txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 1).Value, "dd/mm/yyyy")
+
+    ' Load ward
+    Dim wc As String
+    wc = tbl.ListRows(actualRow).Range(1, 6).Value
+    Dim j As Long
+    For j = 0 To UBound(wardCodes)
+        If wardCodes(j) = wc Then
+            cmbWard.ListIndex = j
+            Exit For
+        End If
+    Next j
+
+    ' Load patient details
+    txtPatientID.Value = tbl.ListRows(actualRow).Range(1, 2).Value
+    txtPatientName.Value = tbl.ListRows(actualRow).Range(1, 4).Value
+    txtAge.Value = CStr(tbl.ListRows(actualRow).Range(1, 7).Value)
+    cmbAgeUnit.Value = tbl.ListRows(actualRow).Range(1, 8).Value
+
+    ' Load sex
+    If tbl.ListRows(actualRow).Range(1, 9).Value = "M" Then
+        optMale.Value = True
+    Else
+        optFemale.Value = True
+    End If
+
+    ' Load NHIS
+    If tbl.ListRows(actualRow).Range(1, 10).Value = "Insured" Then
+        optInsured.Value = True
+    Else
+        optNonInsured.Value = True
+    End If
 End Sub
 
 Private Sub cmbWard_Change()
@@ -1472,27 +2006,6 @@ Private Function SaveAdmissionEntry() As Boolean
     SaveAdmissionEntry = True
 End Function
 
-Private Sub UpdateRecentList()
-    lstRecent.Clear
-    Dim tbl As ListObject
-    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
-
-    Dim startRow As Long
-    startRow = tbl.ListRows.Count - 9
-    If startRow < 1 Then startRow = 1
-
-    Dim i As Long
-    For i = startRow To tbl.ListRows.Count
-        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
-           tbl.ListRows(i).Range(1, 1).Value <> "" Then
-            lstRecent.AddItem tbl.ListRows(i).Range(1, 6).Value & " | " & _
-                tbl.ListRows(i).Range(1, 4).Value & " | " & _
-                tbl.ListRows(i).Range(1, 9).Value & " | Age: " & _
-                tbl.ListRows(i).Range(1, 7).Value
-        End If
-    Next i
-End Sub
-
 Private Function ParseDateAdm(dateStr As String) As Date
     On Error GoTo badDate
     Dim parts() As String
@@ -1557,6 +2070,88 @@ Private Sub UserForm_Initialize()
 
     lblStatus.Caption = "Ready"
     txtAge.SetFocus
+    UpdateRecentList
+End Sub
+
+Private Sub UpdateRecentList()
+    lstRecent.Clear
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim i As Long
+    For i = startRow To tbl.ListRows.Count
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
+           tbl.ListRows(i).Range(1, 1).Value <> "" Then
+            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
+                tbl.ListRows(i).Range(1, 6).Value & " | " & _
+                tbl.ListRows(i).Range(1, 7).Value & " " & _
+                tbl.ListRows(i).Range(1, 8).Value & " | " & _
+                tbl.ListRows(i).Range(1, 9).Value & " | " & _
+                tbl.ListRows(i).Range(1, 10).Value
+        End If
+    Next i
+End Sub
+
+Private Sub lstRecent_Click()
+    If lstRecent.ListIndex < 0 Then Exit Sub
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    ' Calculate actual row (last 10 entries)
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim actualRow As Long
+    actualRow = startRow + lstRecent.ListIndex
+
+    If actualRow > tbl.ListRows.Count Then Exit Sub
+
+    ' Load the selected entry
+    Dim entryDate As Date
+    entryDate = tbl.ListRows(actualRow).Range(1, 1).Value
+
+    cmbMonth.ListIndex = Month(entryDate) - 1
+    spnDay.Value = Day(entryDate)
+    txtDay.Value = CStr(Day(entryDate))
+
+    ' Load ward
+    Dim wc As String
+    wc = tbl.ListRows(actualRow).Range(1, 6).Value
+    Dim j As Long
+    For j = 0 To UBound(wardCodes)
+        If wardCodes(j) = wc Then
+            cmbWard.ListIndex = j
+            Exit For
+        End If
+    Next j
+
+    ' Load age and unit
+    txtAge.Value = CStr(tbl.ListRows(actualRow).Range(1, 7).Value)
+    cmbAgeUnit.Value = tbl.ListRows(actualRow).Range(1, 8).Value
+
+    ' Load sex
+    If tbl.ListRows(actualRow).Range(1, 9).Value = "M" Then
+        optMale.Value = True
+    Else
+        optFemale.Value = True
+    End If
+
+    ' Load NHIS
+    If tbl.ListRows(actualRow).Range(1, 10).Value = "Insured" Then
+        optInsured.Value = True
+    Else
+        optNonInsured.Value = True
+    End If
+
+    lblStatus.Caption = "Loaded entry for editing"
+    lblStatus.ForeColor = &H0080FF ' Orange
+    txtAge.SetFocus
 End Sub
 
 Private Sub btnSave_Click()
@@ -1578,15 +2173,15 @@ Private Sub btnSave_Click()
 
     Dim wc As String
     wc = wardCodes(cmbWard.ListIndex)
-    
+
     Dim age As Long
     age = CLng(txtAge.Value)
     Dim unit As String
     unit = cmbAgeUnit.Value
-    
+
     Dim sex As String
     If optMale.Value Then sex = "M" Else sex = "F"
-    
+
     Dim nhis As String
     If optInsured.Value Then nhis = "Insured" Else nhis = "Non-Insured"
 
@@ -1600,7 +2195,8 @@ Private Sub btnSave_Click()
     txtAge.Value = ""
     cmbAgeUnit.ListIndex = 0 ' Reset to Years
     ' Keep persistent selections (Ward, Date, Sex, NHIS)
-    
+
+    UpdateRecentList
     txtAge.SetFocus
 End Sub
 
@@ -1651,6 +2247,87 @@ Private Sub UserForm_Initialize()
 
     ' Populate cause of death combo with previous entries
     PopulateCauses
+    UpdateRecentList
+End Sub
+
+Private Sub UpdateRecentList()
+    lstRecent.Clear
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
+
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim i As Long
+    For i = startRow To tbl.ListRows.Count
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
+           tbl.ListRows(i).Range(1, 1).Value <> "" Then
+            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
+                tbl.ListRows(i).Range(1, 6).Value & " | " & _
+                tbl.ListRows(i).Range(1, 3).Value & " | " & _
+                tbl.ListRows(i).Range(1, 4).Value
+        End If
+    Next i
+End Sub
+
+Private Sub lstRecent_Click()
+    If lstRecent.ListIndex < 0 Then Exit Sub
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
+
+    ' Calculate actual row (last 10 entries)
+    Dim startRow As Long
+    startRow = tbl.ListRows.Count - 9
+    If startRow < 1 Then startRow = 1
+
+    Dim actualRow As Long
+    actualRow = startRow + lstRecent.ListIndex
+
+    If actualRow > tbl.ListRows.Count Then Exit Sub
+
+    ' Load the selected entry
+    txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 1).Value, "dd/mm/yyyy")
+
+    ' Load ward
+    Dim wc As String
+    wc = tbl.ListRows(actualRow).Range(1, 6).Value
+    Dim j As Long
+    For j = 0 To UBound(wardCodes)
+        If wardCodes(j) = wc Then
+            cmbWard.ListIndex = j
+            Exit For
+        End If
+    Next j
+
+    ' Load patient details
+    txtFolderNum.Value = tbl.ListRows(actualRow).Range(1, 2).Value
+    txtName.Value = tbl.ListRows(actualRow).Range(1, 3).Value
+    txtAge.Value = CStr(tbl.ListRows(actualRow).Range(1, 7).Value)
+    cmbAgeUnit.Value = tbl.ListRows(actualRow).Range(1, 8).Value
+
+    ' Load sex
+    If tbl.ListRows(actualRow).Range(1, 9).Value = "M" Then
+        optMale.Value = True
+    Else
+        optFemale.Value = True
+    End If
+
+    ' Load NHIS
+    If tbl.ListRows(actualRow).Range(1, 10).Value = "Insured" Then
+        optInsured.Value = True
+    Else
+        optNonInsured.Value = True
+    End If
+
+    ' Load within 24 hours flag
+    chkWithin24.Value = (tbl.ListRows(actualRow).Range(1, 5).Value = "Yes")
+
+    ' Load cause
+    cmbCause.Value = tbl.ListRows(actualRow).Range(1, 11).Value
+
+    lblStatus.Caption = "Loaded entry for editing"
 End Sub
 
 Private Sub PopulateCauses()
@@ -1681,6 +2358,7 @@ Private Sub btnSaveNew_Click()
         txtAge.Value = ""
         cmbCause.Value = ""
         chkWithin24.Value = False
+        UpdateRecentList
         txtFolderNum.SetFocus
     End If
 End Sub
@@ -1845,7 +2523,7 @@ def create_daily_entry_form(vbproj):
     form.Name = "frmDailyEntry"
     form.Properties("Caption").Value = "Daily Bed State Entry"
     form.Properties("Width").Value = 420
-    form.Properties("Height").Value = 530
+    form.Properties("Height").Value = 670
 
     d = form.Designer
 
@@ -1929,6 +2607,17 @@ def create_daily_entry_form(vbproj):
     y += 32
     # Buttons row 2
     _add_button(d, "btnCancel", "Cancel", 12, y, 90, 28)
+    y += 38
+
+    # Recent entries list
+    _add_label(d, "lblRecent", "Recent Daily Entries:", 12, y, 150, 18)
+    y += 20
+    lst = d.Controls.Add("Forms.ListBox.1")
+    lst.Name = "lstRecent"
+    lst.Left = 12
+    lst.Top = y
+    lst.Width = 390
+    lst.Height = 100
 
     # Inject code
     form.CodeModule.AddFromString(VBA_FRM_DAILY_ENTRY_CODE)
@@ -1973,14 +2662,14 @@ def create_admission_form(vbproj):
 
     # Sex radio buttons
     _add_label(d, "lblSexLabel", "Sex:", 12, y, 60, 18)
-    _add_optionbutton(d, "optMale", "Male", 80, y, 60, 18)
-    _add_optionbutton(d, "optFemale", "Female", 150, y, 70, 18)
+    _add_optionbutton(d, "optMale", "Male", 80, y, 60, 18, "grpSex")
+    _add_optionbutton(d, "optFemale", "Female", 150, y, 70, 18, "grpSex")
     y += 28
 
     # NHIS radio buttons
     _add_label(d, "lblNHISLabel", "NHIS:", 12, y, 60, 18)
-    _add_optionbutton(d, "optInsured", "Insured", 80, y, 80, 18)
-    _add_optionbutton(d, "optNonInsured", "Non-Insured", 170, y, 100, 18)
+    _add_optionbutton(d, "optInsured", "Insured", 80, y, 80, 18, "grpNHIS")
+    _add_optionbutton(d, "optNonInsured", "Non-Insured", 170, y, 100, 18, "grpNHIS")
     y += 28
 
     # Status
@@ -2012,7 +2701,7 @@ def create_ages_entry_form(vbproj):
     form.Name = "frmAgesEntry"
     form.Properties("Caption").Value = "Speed Ages Entry"
     form.Properties("Width").Value = 350
-    form.Properties("Height").Value = 380
+    form.Properties("Height").Value = 520
 
     d = form.Designer
     y = 12
@@ -2038,21 +2727,21 @@ def create_ages_entry_form(vbproj):
     # Age Entry Area
     _add_label(d, "lblAge", "AGE:", 12, y, 60, 20).Font.Bold = True
     _add_textbox(d, "txtAge", 80, y, 60, 24).Font.Size = 12
-    
+
     _add_label(d, "lblUnit", "Unit:", 150, y+4, 40, 18)
     _add_combobox(d, "cmbAgeUnit", 195, y, 100, 22)
     y += 38
 
     # Sex
     _add_label(d, "lblSex", "Sex:", 12, y, 60, 18)
-    _add_optionbutton(d, "optMale", "Male", 80, y, 60, 20)
-    _add_optionbutton(d, "optFemale", "Female", 150, y, 70, 20)
+    _add_optionbutton(d, "optMale", "Male", 80, y, 60, 20, "grpSex")
+    _add_optionbutton(d, "optFemale", "Female", 150, y, 70, 20, "grpSex")
     y += 28
 
     # Insurance
     _add_label(d, "lblIns", "Health Ins:", 12, y, 65, 18)
-    _add_optionbutton(d, "optInsured", "Insured", 80, y, 70, 20)
-    _add_optionbutton(d, "optNonInsured", "Non-Insured", 160, y, 100, 20)
+    _add_optionbutton(d, "optInsured", "Insured", 80, y, 70, 20, "grpNHIS")
+    _add_optionbutton(d, "optNonInsured", "Non-Insured", 160, y, 100, 20, "grpNHIS")
     y += 32
 
     # Status
@@ -2065,6 +2754,17 @@ def create_ages_entry_form(vbproj):
     btnSave = _add_button(d, "btnSave", "Save Entry (Enter)", 12, y, 140, 30)
     btnSave.Default = True
     _add_button(d, "btnClose", "Close", 160, y, 100, 30)
+    y += 38
+
+    # Recent entries list
+    _add_label(d, "lblRecent", "Recent Age Entries:", 12, y, 150, 18)
+    y += 20
+    lst = d.Controls.Add("Forms.ListBox.1")
+    lst.Name = "lstRecent"
+    lst.Left = 12
+    lst.Top = y
+    lst.Width = 310
+    lst.Height = 100
 
     # Inject
     form.CodeModule.AddFromString(VBA_FRM_AGES_ENTRY_CODE)
@@ -2076,7 +2776,7 @@ def create_death_form(vbproj):
     form.Name = "frmDeath"
     form.Properties("Caption").Value = "Death Record Entry"
     form.Properties("Width").Value = 420
-    form.Properties("Height").Value = 480
+    form.Properties("Height").Value = 620
 
     d = form.Designer
     y = 12
@@ -2109,14 +2809,14 @@ def create_death_form(vbproj):
 
     # Sex
     _add_label(d, "lblSexLabel", "Sex:", 12, y, 60, 18)
-    _add_optionbutton(d, "optMale", "Male", 80, y, 60, 18)
-    _add_optionbutton(d, "optFemale", "Female", 150, y, 70, 18)
+    _add_optionbutton(d, "optMale", "Male", 80, y, 60, 18, "grpSex")
+    _add_optionbutton(d, "optFemale", "Female", 150, y, 70, 18, "grpSex")
     y += 28
 
     # NHIS
     _add_label(d, "lblNHISLabel", "NHIS:", 12, y, 60, 18)
-    _add_optionbutton(d, "optInsured", "Insured", 80, y, 80, 18)
-    _add_optionbutton(d, "optNonInsured", "Non-Insured", 170, y, 100, 18)
+    _add_optionbutton(d, "optInsured", "Insured", 80, y, 80, 18, "grpNHIS")
+    _add_optionbutton(d, "optNonInsured", "Non-Insured", 170, y, 100, 18, "grpNHIS")
     y += 28
 
     # Death within 24hrs checkbox
@@ -2148,8 +2848,414 @@ def create_death_form(vbproj):
     _add_button(d, "btnSaveNew", "Save && New", 12, y, 110, 30)
     _add_button(d, "btnSaveClose", "Save && Close", 130, y, 110, 30)
     _add_button(d, "btnCancel", "Cancel", 250, y, 90, 30)
+    y += 38
+
+    # Recent deaths list
+    _add_label(d, "lblRecent", "Recent Deaths:", 12, y, 150, 18)
+    y += 20
+    lst = d.Controls.Add("Forms.ListBox.1")
+    lst.Name = "lstRecent"
+    lst.Left = 12
+    lst.Top = y
+    lst.Width = 390
+    lst.Height = 100
 
     form.CodeModule.AddFromString(VBA_FRM_DEATH_CODE)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# PREFERENCES MANAGER FORM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+VBA_FRM_PREFERENCES_MANAGER_CODE = '''
+Option Explicit
+
+Private Sub UserForm_Initialize()
+    LoadPreferences
+End Sub
+
+Private Sub LoadPreferences()
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblPreferences")
+
+    ' Load checkbox values by matching keys
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        Dim key As String
+        key = Trim(CStr(tbl.ListRows(i).Range(1, 1).Value))
+
+        If key = "show_emergency_total_remaining" Then
+            chkShowEmergencyRemaining.Value = CBool(tbl.ListRows(i).Range(1, 2).Value)
+        ElseIf key = "subtract_deaths_under_24hrs_from_admissions" Then
+            chkSubtractDeaths.Value = CBool(tbl.ListRows(i).Range(1, 2).Value)
+        End If
+    Next i
+End Sub
+
+Private Sub btnSave_Click()
+    ' Save changes to table
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblPreferences")
+
+    ' Update table values
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        Dim key As String
+        key = Trim(CStr(tbl.ListRows(i).Range(1, 1).Value))
+
+        If key = "show_emergency_total_remaining" Then
+            tbl.ListRows(i).Range(1, 2).Value = chkShowEmergencyRemaining.Value
+        ElseIf key = "subtract_deaths_under_24hrs_from_admissions" Then
+            tbl.ListRows(i).Range(1, 2).Value = chkSubtractDeaths.Value
+        End If
+    Next i
+
+    MsgBox "Preferences saved to table!" & vbCrLf & vbCrLf & _
+           "Next step: Click 'Export to JSON' button to save to file, " & _
+           "then rebuild the workbook for changes to take effect.", _
+           vbInformation, "Preferences Saved"
+
+    Unload Me
+End Sub
+
+Private Sub btnExport_Click()
+    ExportPreferencesConfig
+End Sub
+
+Private Sub btnSaveRebuild_Click()
+    ' Save to table, then automatically rebuild workbook
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblPreferences")
+
+    ' Update table values
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        Dim key As String
+        key = Trim(CStr(tbl.ListRows(i).Range(1, 1).Value))
+
+        If key = "show_emergency_total_remaining" Then
+            tbl.ListRows(i).Range(1, 2).Value = chkShowEmergencyRemaining.Value
+        ElseIf key = "subtract_deaths_under_24hrs_from_admissions" Then
+            tbl.ListRows(i).Range(1, 2).Value = chkSubtractDeaths.Value
+        End If
+    Next i
+
+    ' Close form
+    Unload Me
+
+    ' Trigger automated rebuild
+    RebuildWorkbookWithPreferences
+End Sub
+
+Private Sub btnCancel_Click()
+    Unload Me
+End Sub
+'''
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# WARD MANAGER FORM
+# ═══════════════════════════════════════════════════════════════════════════════
+
+VBA_FRM_WARD_MANAGER_CODE = '''
+Option Explicit
+
+Private Sub UserForm_Initialize()
+    LoadWards
+End Sub
+
+Private Sub LoadWards()
+    lstWards.Clear
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        Dim dispText As String
+        dispText = tbl.ListRows(i).Range(1, 1).Value & " - " & _
+                   tbl.ListRows(i).Range(1, 2).Value & " (" & _
+                   tbl.ListRows(i).Range(1, 3).Value & " beds)"
+        lstWards.AddItem dispText
+    Next i
+
+    If lstWards.ListCount > 0 Then lstWards.ListIndex = 0
+End Sub
+
+Private Sub lstWards_Click()
+    If lstWards.ListIndex < 0 Then Exit Sub
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+    Dim idx As Long
+    idx = lstWards.ListIndex + 1
+
+    txtCode.Value = tbl.ListRows(idx).Range(1, 1).Value
+    txtName.Value = tbl.ListRows(idx).Range(1, 2).Value
+    txtBeds.Value = tbl.ListRows(idx).Range(1, 3).Value
+    txtPrevRemaining.Value = tbl.ListRows(idx).Range(1, 4).Value
+    chkEmergency.Value = tbl.ListRows(idx).Range(1, 5).Value
+    txtDisplayOrder.Value = tbl.ListRows(idx).Range(1, 6).Value
+End Sub
+
+Private Sub btnNew_Click()
+    txtCode.Value = ""
+    txtName.Value = ""
+    txtBeds.Value = "0"
+    txtPrevRemaining.Value = "0"
+    chkEmergency.Value = False
+    txtDisplayOrder.Value = lstWards.ListCount + 1
+    txtCode.SetFocus
+    lstWards.ListIndex = -1
+End Sub
+
+Private Sub btnSave_Click()
+    ' Validate inputs
+    If Trim(txtCode.Value) = "" Then
+        MsgBox "Please enter a ward code.", vbExclamation
+        txtCode.SetFocus
+        Exit Sub
+    End If
+
+    If Trim(txtName.Value) = "" Then
+        MsgBox "Please enter a ward name.", vbExclamation
+        txtName.SetFocus
+        Exit Sub
+    End If
+
+    If Not IsNumeric(txtBeds.Value) Or CLng(txtBeds.Value) < 0 Then
+        MsgBox "Bed complement must be a non-negative number.", vbExclamation
+        txtBeds.SetFocus
+        Exit Sub
+    End If
+
+    If Not IsNumeric(txtDisplayOrder.Value) Or CLng(txtDisplayOrder.Value) < 1 Then
+        MsgBox "Display order must be a positive number.", vbExclamation
+        txtDisplayOrder.SetFocus
+        Exit Sub
+    End If
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+
+    Dim wardRow As Long
+    wardRow = lstWards.ListIndex + 1
+
+    ' Check if this is a new ward (no selection) or update
+    If lstWards.ListIndex < 0 Then
+        ' New ward - check for duplicate code
+        Dim i As Long
+        For i = 1 To tbl.ListRows.Count
+            If UCase(Trim(tbl.ListRows(i).Range(1, 1).Value)) = UCase(Trim(txtCode.Value)) Then
+                MsgBox "Ward code '" & txtCode.Value & "' already exists.", vbExclamation
+                Exit Sub
+            End If
+        Next i
+
+        ' Add new row
+        tbl.ListRows.Add
+        wardRow = tbl.ListRows.Count
+    End If
+
+    ' Save values
+    tbl.ListRows(wardRow).Range(1, 1).Value = Trim(txtCode.Value)
+    tbl.ListRows(wardRow).Range(1, 2).Value = Trim(txtName.Value)
+    tbl.ListRows(wardRow).Range(1, 3).Value = CLng(txtBeds.Value)
+    tbl.ListRows(wardRow).Range(1, 4).Value = CLng(txtPrevRemaining.Value)
+    tbl.ListRows(wardRow).Range(1, 5).Value = chkEmergency.Value
+    tbl.ListRows(wardRow).Range(1, 6).Value = CLng(txtDisplayOrder.Value)
+
+    MsgBox "Ward saved successfully!" & vbCrLf & vbCrLf & _
+           "Don't forget to export the configuration and rebuild the workbook.", _
+           vbInformation
+
+    LoadWards
+End Sub
+
+Private Sub btnDelete_Click()
+    If lstWards.ListIndex < 0 Then
+        MsgBox "Please select a ward to delete.", vbExclamation
+        Exit Sub
+    End If
+
+    Dim response As VbMsgBoxResult
+    response = MsgBox("Are you sure you want to delete this ward?" & vbCrLf & _
+                      "This will NOT delete the ward sheet or data." & vbCrLf & vbCrLf & _
+                      "You must rebuild the workbook to remove the ward sheet.", _
+                      vbQuestion + vbYesNo, "Confirm Delete")
+
+    If response = vbNo Then Exit Sub
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+
+    tbl.ListRows(lstWards.ListIndex + 1).Delete
+
+    LoadWards
+    btnNew_Click
+End Sub
+
+Private Sub btnExport_Click()
+    ExportWardsConfig
+End Sub
+
+Private Sub btnClose_Click()
+    Unload Me
+End Sub
+'''
+
+def create_ward_manager_form(vbproj):
+    """Create the frmWardManager UserForm."""
+    form = vbproj.VBComponents.Add(3)  # vbext_ct_MSForm
+    form.Name = "frmWardManager"
+    form.Properties("Caption").Value = "Manage Ward Configuration"
+    form.Properties("Width").Value = 520
+    form.Properties("Height").Value = 400
+
+    d = form.Designer
+
+    y = 12
+
+    # Title
+    lbl = _add_label(d, "lblTitle", "Ward Configuration Manager", 12, y, 490, 20)
+    lbl.Font.Bold = True
+    lbl.Font.Size = 14
+    lbl.TextAlign = 2  # center
+    y += 28
+
+    # Instructions
+    lbl = _add_label(d, "lblInstructions",
+                     "Add or edit wards below. Click 'Export Config' to save to JSON, then rebuild the workbook.",
+                     12, y, 490, 30)
+    lbl.ForeColor = 0x808080
+    lbl.WordWrap = True
+    y += 38
+
+    # Ward list (left side)
+    _add_label(d, "lblWards", "Wards:", 12, y, 180, 18)
+    lst = d.Controls.Add("Forms.ListBox.1")
+    lst.Name = "lstWards"
+    lst.Left = 12
+    lst.Top = y + 22
+    lst.Width = 180
+    lst.Height = 240
+
+    # Ward details (right side)
+    x2 = 205
+    _add_label(d, "lblDetails", "Ward Details:", x2, y, 200, 18)
+    y2 = y + 22
+
+    # Code
+    _add_label(d, "lblCode", "Code:", x2, y2, 80, 18)
+    _add_textbox(d, "txtCode", x2 + 105, y2, 100, 20)
+    y2 += 26
+
+    # Name
+    _add_label(d, "lblName", "Name:", x2, y2, 80, 18)
+    _add_textbox(d, "txtName", x2 + 105, y2, 200, 20)
+    y2 += 26
+
+    # Bed Complement
+    _add_label(d, "lblBeds", "Bed Complement:", x2, y2, 100, 18)
+    _add_textbox(d, "txtBeds", x2 + 105, y2, 60, 20)
+    y2 += 26
+
+    # Previous Year Remaining
+    _add_label(d, "lblPrevRem", "Prev Year Remaining:", x2, y2, 100, 18)
+    _add_textbox(d, "txtPrevRemaining", x2 + 105, y2, 60, 20)
+    y2 += 26
+
+    # Emergency checkbox
+    chk = d.Controls.Add("Forms.CheckBox.1")
+    chk.Name = "chkEmergency"
+    chk.Caption = "Emergency Ward"
+    chk.Left = x2
+    chk.Top = y2
+    chk.Width = 120
+    chk.Height = 18
+    y2 += 26
+
+    # Display Order
+    _add_label(d, "lblOrder", "Display Order:", x2, y2, 100, 18)
+    _add_textbox(d, "txtDisplayOrder", x2 + 105, y2, 60, 20)
+    y2 += 32
+
+    # Buttons (right side)
+    _add_button(d, "btnNew", "New Ward", x2, y2, 90, 28)
+    _add_button(d, "btnSave", "Save", x2 + 95, y2, 90, 28)
+    _add_button(d, "btnDelete", "Delete", x2 + 190, y2, 80, 28)
+
+    # Bottom buttons
+    y_bottom = 350
+    _add_button(d, "btnExport", "Export Config to JSON", 12, y_bottom, 150, 28)
+    _add_button(d, "btnClose", "Close", 390, y_bottom, 110, 28)
+
+    form.CodeModule.AddFromString(VBA_FRM_WARD_MANAGER_CODE)
+
+
+def create_preferences_manager_form(vbproj):
+    """Create the frmPreferencesManager UserForm."""
+    form = vbproj.VBComponents.Add(3)  # vbext_ct_MSForm
+    form.Name = "frmPreferencesManager"
+    form.Properties("Caption").Value = "Hospital Preferences Configuration"
+    form.Properties("Width").Value = 500
+    form.Properties("Height").Value = 370
+
+    d = form.Designer
+    y = 12
+
+    # Title
+    lbl = _add_label(d, "lblTitle", "Hospital Preferences", 12, y, 470, 20)
+    lbl.Font.Bold = True
+    lbl.Font.Size = 14
+    lbl.TextAlign = 2  # center
+    y += 28
+
+    # Instructions
+    lbl = _add_label(d, "lblInstructions",
+                     "Configure hospital-specific preferences. After saving and exporting, rebuild the workbook for changes to take effect.",
+                     12, y, 470, 35)
+    lbl.ForeColor = 0x808080
+    lbl.WordWrap = True
+    y += 45
+
+    # Warning frame
+    lbl = _add_label(d, "lblWarning",
+                     "WARNING: These preferences affect formulas and report structure. Changes require workbook rebuild!",
+                     12, y, 470, 30)
+    lbl.ForeColor = 0x0000C0  # Dark red
+    lbl.WordWrap = True
+    lbl.Font.Bold = True
+    y += 40
+
+    # Preference checkboxes
+    chk1 = d.Controls.Add("Forms.CheckBox.1")
+    chk1.Name = "chkShowEmergencyRemaining"
+    chk1.Caption = "Show 'Emergency Total Remaining' row in Monthly Summary"
+    chk1.Left = 20
+    chk1.Top = y
+    chk1.Width = 450
+    chk1.Height = 18
+    y += 30
+
+    chk2 = d.Controls.Add("Forms.CheckBox.1")
+    chk2.Name = "chkSubtractDeaths"
+    chk2.Caption = "Subtract deaths under 24hrs from monthly admission totals"
+    chk2.Left = 20
+    chk2.Top = y
+    chk2.Width = 450
+    chk2.Height = 18
+    y += 50
+
+    # Buttons (arranged in 2 rows)
+    y_buttons = 240
+    # Top row - Primary actions
+    _add_button(d, "btnSave", "Save to Table", 20, y_buttons, 140, 32)
+    _add_button(d, "btnSaveRebuild", "Save & Rebuild", 170, y_buttons, 140, 32)
+    _add_button(d, "btnCancel", "Cancel", 360, y_buttons, 120, 32)
+    # Bottom row - Export only
+    y_buttons += 42
+    _add_button(d, "btnExport", "Export to JSON (without rebuild)", 20, y_buttons, 310, 28)
+
+    form.CodeModule.AddFromString(VBA_FRM_PREFERENCES_MANAGER_CODE)
 
 
 # ─── Helper functions for control creation ───────────────────────────────────
@@ -2186,7 +3292,7 @@ def _add_combobox(designer, name, left, top, width, height, style=0):
     return ctrl
 
 
-def _add_optionbutton(designer, name, caption, left, top, width, height):
+def _add_optionbutton(designer, name, caption, left, top, width, height, group_name=None):
     ctrl = designer.Controls.Add("Forms.OptionButton.1")
     ctrl.Name = name
     ctrl.Caption = caption
@@ -2194,6 +3300,8 @@ def _add_optionbutton(designer, name, caption, left, top, width, height):
     ctrl.Top = top
     ctrl.Width = width
     ctrl.Height = height
+    if group_name:
+        ctrl.GroupName = group_name
     return ctrl
 
 
@@ -2258,31 +3366,39 @@ def create_nav_buttons(wb):
     ws = wb.Sheets("Control")
 
     # Remove placeholder text (now the cells themselves will have the text)
-    for row in [9, 11, 13, 15, 17]: # Added 17 for the new button
+    for row in [9, 11, 13, 15, 17, 19, 21, 23, 26, 28, 30]:  # All button rows
         ws.Range(f"A{row}:C{row}").ClearContents
 
     # Set cell values which will become button captions
     ws.Range("A9").Value = "Daily Bed Entry"
     ws.Range("A11").Value = "Record Admission"
     ws.Range("A13").Value = "Record Death"
-    ws.Range("A15").Value = "Record Ages Entry" # New button
-    ws.Range("A17").Value = "Refresh Reports" # Moved
-    ws.Range("A19").Value = "Export Year-End" # Moved down
+    ws.Range("A15").Value = "Record Ages Entry"
+    ws.Range("A17").Value = "Refresh Reports"
+    ws.Range("A19").Value = "Manage Wards"  # New button
+    ws.Range("A21").Value = "Export Ward Config"  # New button
+    ws.Range("A23").Value = "Export Year-End"  # Moved down
 
     _add_sheet_button(ws, "btnDailyEntry", "Control!A9:C9", "ShowDailyEntry")
     _add_sheet_button(ws, "btnAdmission", "Control!A11:C11", "ShowAdmission")
     _add_sheet_button(ws, "btnDeath", "Control!A13:C13", "ShowDeath")
     _add_sheet_button(ws, "btnAgesEntry", "Control!A15:C15", "ShowAgesEntry")
     _add_sheet_button(ws, "btnRefresh", "Control!A17:C17", "ShowRefreshReports")
-    _add_sheet_button(ws, "btnExportYearEnd", "Control!A19:C19", "ExportCarryForward")
+    _add_sheet_button(ws, "btnManageWards", "Control!A19:C19", "ShowWardManager")  # New
+    _add_sheet_button(ws, "btnExportConfig", "Control!A21:C21", "ExportWardConfig")  # New
+    _add_sheet_button(ws, "btnExportYearEnd", "Control!A23:C23", "ExportCarryForward")  # Moved
+    _add_sheet_button(ws, "btnPreferences", "Control!A25:C25", "ShowPreferencesInfo")  # New
 
-    # Diagnostic buttons (row 22, 24, 26 for spacing)
-    ws.Range("A22").Value = "Import from Old Workbook"
-    ws.Range("A24").Value = "Recalculate All Data"
-    ws.Range("A26").Value = "Verify Calculations"
-    _add_sheet_button(ws, "btnImport", "Control!A22:C22", "ImportFromOldWorkbook")
-    _add_sheet_button(ws, "btnRecalcAll", "Control!A24:C24", "RecalculateAllRows")
-    _add_sheet_button(ws, "btnVerify", "Control!A26:C26", "VerifyCalculations")
+    # Rebuild button (special orange button)
+    _add_sheet_button(ws, "btnRebuild", "Control!A27:C27", "RebuildWorkbookWithPreferences")
+
+    # Diagnostic buttons (row 29, 31, 33 for spacing)
+    ws.Range("A29").Value = "Import from Old Workbook"
+    ws.Range("A31").Value = "Recalculate All Data"
+    ws.Range("A33").Value = "Verify Calculations"
+    _add_sheet_button(ws, "btnImport", "Control!A29:C29", "ImportFromOldWorkbook")
+    _add_sheet_button(ws, "btnRecalcAll", "Control!A31:C31", "RecalculateAllRows")
+    _add_sheet_button(ws, "btnVerify", "Control!A33:C33", "VerifyCalculations")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -2356,6 +3472,8 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
         create_admission_form(vbproj)
         create_ages_entry_form(vbproj)
         create_death_form(vbproj)
+        create_ward_manager_form(vbproj)
+        create_preferences_manager_form(vbproj)
 
         # 4. Add navigation buttons to Control sheet
         print("  Adding navigation buttons...")
