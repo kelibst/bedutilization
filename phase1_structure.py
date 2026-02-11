@@ -565,6 +565,265 @@ def build_ward_sheet(wb: Workbook, config: WorkbookConfig, ward):
     ws.page_setup.fitToPage = True
 
 
+def build_emergency_combined_sheet(wb: Workbook, config: WorkbookConfig):
+    """
+    Build a combined Emergency sheet showing MAE and FAE data side-by-side.
+
+    Layout: 12 monthly blocks with dual-column structure
+    - Left columns (B-H): Male Emergency (MAE) data
+    - Right columns (I-O): Female Emergency (FAE) data
+    """
+    # Find emergency wards
+    mae_ward = next((w for w in config.WARDS if w.code == "MAE"), None)
+    fae_ward = next((w for w in config.WARDS if w.code == "FAE"), None)
+
+    if not mae_ward or not fae_ward:
+        print("WARNING: MAE or FAE ward not found. Skipping Emergency combined sheet.")
+        return
+
+    # Create sheet
+    ws = wb.create_sheet("Emergency")
+    ws.sheet_properties.tabColor = "FF6600"  # Bright orange
+
+    current_row = 1
+
+    # Map field names to columns
+    mae_fields = {
+        2: "Admissions",       # Col B
+        3: "Discharges",       # Col C
+        4: "Deaths",           # Col D
+        5: "DeathsUnder24Hrs", # Col E
+        6: "TransfersIn",      # Col F
+        7: "TransfersOut",     # Col G
+        8: "Remaining"         # Col H
+    }
+
+    fae_fields = {
+        9: "Admissions",       # Col I
+        10: "Discharges",      # Col J
+        11: "Deaths",          # Col K
+        12: "DeathsUnder24Hrs",# Col L
+        13: "TransfersIn",     # Col M
+        14: "TransfersOut",    # Col N
+        15: "Remaining"        # Col O
+    }
+
+    for month_num in range(1, 13):
+        month_name = config.MONTH_NAMES[month_num - 1]
+
+        # ── Header Block ──
+        ws.merge_cells(f"A{current_row}:O{current_row}")
+        c = ws.cell(row=current_row, column=1, value="GHANA HEALTH SERVICE")
+        c.font = Font(name="Calibri", bold=True, size=14, color="1F4E79")
+        c.alignment = CENTER
+        current_row += 1
+
+        ws.merge_cells(f"A{current_row}:O{current_row}")
+        c = ws.cell(row=current_row, column=1, value="DAILY BED UTILIZATION FORM")
+        c.font = Font(name="Calibri", bold=True, size=12)
+        c.alignment = CENTER
+        current_row += 1
+
+        # ── Hospital/Ward/Month Info ──
+        ws.cell(row=current_row, column=1, value="Hospital:").font = BOLD_FONT
+        ws.cell(row=current_row, column=2, value=config.hospital_name).font = NORMAL_FONT
+
+        ws.cell(row=current_row, column=5, value="Ward:").font = BOLD_FONT
+        ws.cell(row=current_row, column=6, value="EMERGENCY (COMBINED)").font = BOLD_FONT
+
+        ws.cell(row=current_row, column=13, value="MONTH").font = BOLD_FONT
+        ws.cell(row=current_row, column=14, value=month_name).font = BOLD_FONT
+        current_row += 1
+
+        # ── Previous Remaining Row ──
+        ws.cell(row=current_row, column=1, value="Number of patients remaining as at last day of previous month").font = BOLD_FONT
+
+        # MAE previous remaining (col B)
+        if month_num == 1:
+            mae_prev_formula = f'=IFERROR(INDEX(tblWardConfig[PrevYearRemaining],MATCH("MAE",tblWardConfig[WardCode],0)),0)'
+        else:
+            prev_month = month_num - 1
+            last_day = config.days_in_month(prev_month)
+            mae_prev_formula = f'=IFERROR(SUMIFS(tblDaily[Remaining],tblDaily[EntryDate],DATE({config.year},{prev_month},{last_day}),tblDaily[WardCode],"MAE"),0)'
+        ws.cell(row=current_row, column=2, value=mae_prev_formula).alignment = CENTER
+
+        # FAE previous remaining (col I)
+        if month_num == 1:
+            fae_prev_formula = f'=IFERROR(INDEX(tblWardConfig[PrevYearRemaining],MATCH("FAE",tblWardConfig[WardCode],0)),0)'
+        else:
+            fae_prev_formula = f'=IFERROR(SUMIFS(tblDaily[Remaining],tblDaily[EntryDate],DATE({config.year},{prev_month},{last_day}),tblDaily[WardCode],"FAE"),0)'
+        ws.cell(row=current_row, column=9, value=fae_prev_formula).alignment = CENTER
+
+        current_row += 1
+
+        # ── Bed Complement Row ──
+        ws.cell(row=current_row, column=1, value="Bed complement").font = BOLD_FONT
+
+        # MAE bed complement
+        ws.cell(row=current_row, column=2, value=f'=IFERROR(INDEX(tblWardConfig[BedComplement],MATCH("MAE",tblWardConfig[WardCode],0)),0)').alignment = CENTER
+
+        # FAE bed complement
+        ws.cell(row=current_row, column=9, value=f'=IFERROR(INDEX(tblWardConfig[BedComplement],MATCH("FAE",tblWardConfig[WardCode],0)),0)').alignment = CENTER
+
+        # Total emergency beds
+        ws.cell(row=current_row, column=15, value=f'=B{current_row}+I{current_row}').alignment = CENTER
+        ws.cell(row=current_row, column=15).font = BOLD_FONT
+
+        current_row += 1
+
+        # ── Column Headers (2 rows) ──
+        # Row 1: Section headers
+        ws.cell(row=current_row, column=1, value="Day").font = HEADER_FONT_WHITE
+        ws.cell(row=current_row, column=1).fill = HEADER_FILL
+        ws.cell(row=current_row, column=1).alignment = CENTER
+        ws.cell(row=current_row, column=1).border = THIN_BORDER
+
+        ws.merge_cells(f"B{current_row}:H{current_row}")
+        c = ws.cell(row=current_row, column=2, value="MALE EMERGENCY")
+        c.font = HEADER_FONT_WHITE
+        c.fill = PatternFill(start_color="4472C4", end_color="4472C4", fill_type="solid")  # Blue
+        c.alignment = CENTER
+        c.border = THIN_BORDER
+
+        ws.merge_cells(f"I{current_row}:O{current_row}")
+        c = ws.cell(row=current_row, column=9, value="FEMALE EMERGENCY")
+        c.font = HEADER_FONT_WHITE
+        c.fill = PatternFill(start_color="ED7D31", end_color="ED7D31", fill_type="solid")  # Orange
+        c.alignment = CENTER
+        c.border = THIN_BORDER
+
+        current_row += 1
+
+        # Row 2: Field headers
+        field_headers = [
+            (1, "Day"),
+            # Male Emergency columns
+            (2, "Adm"), (3, "Dis"), (4, "Dth"), (5, "D<24"),
+            (6, "TrIn"), (7, "TrOut"), (8, "Rem"),
+            # Female Emergency columns
+            (9, "Adm"), (10, "Dis"), (11, "Dth"), (12, "D<24"),
+            (13, "TrIn"), (14, "TrOut"), (15, "Rem")
+        ]
+
+        for col_num, header_text in field_headers:
+            c = ws.cell(row=current_row, column=col_num, value=header_text)
+            c.font = HEADER_FONT_WHITE
+            c.fill = HEADER_FILL
+            c.alignment = CENTER
+            c.border = THIN_BORDER
+
+        current_row += 1
+
+        # ── Daily Rows (1-31) ──
+        days_in_month = config.days_in_month(month_num)
+
+        for day in range(1, 32):
+            # Day number (col A)
+            c = ws.cell(row=current_row, column=1, value=day)
+            c.alignment = CENTER
+            c.border = THIN_BORDER
+
+            if day <= days_in_month:
+                # MAE data (cols B-H)
+                for col_num, field_name in mae_fields.items():
+                    formula = (
+                        f'=IFERROR(IF(SUMIFS(tblDaily[{field_name}],'
+                        f'tblDaily[EntryDate],DATE({config.year},{month_num},{day}),'
+                        f'tblDaily[WardCode],"MAE")=0,"",'
+                        f'SUMIFS(tblDaily[{field_name}],'
+                        f'tblDaily[EntryDate],DATE({config.year},{month_num},{day}),'
+                        f'tblDaily[WardCode],"MAE")),"")'
+                    )
+                    c = ws.cell(row=current_row, column=col_num, value=formula)
+                    c.alignment = CENTER
+                    c.border = THIN_BORDER
+
+                # FAE data (cols I-O)
+                for col_num, field_name in fae_fields.items():
+                    formula = (
+                        f'=IFERROR(IF(SUMIFS(tblDaily[{field_name}],'
+                        f'tblDaily[EntryDate],DATE({config.year},{month_num},{day}),'
+                        f'tblDaily[WardCode],"FAE")=0,"",'
+                        f'SUMIFS(tblDaily[{field_name}],'
+                        f'tblDaily[EntryDate],DATE({config.year},{month_num},{day}),'
+                        f'tblDaily[WardCode],"FAE")),"")'
+                    )
+                    c = ws.cell(row=current_row, column=col_num, value=formula)
+                    c.alignment = CENTER
+                    c.border = THIN_BORDER
+            else:
+                # Gray out invalid days
+                for col_num in range(2, 16):  # Cols B-O
+                    c = ws.cell(row=current_row, column=col_num)
+                    c.fill = GRAY_FILL
+                    c.border = THIN_BORDER
+
+            current_row += 1
+
+        # ── TOTAL Row ──
+        c = ws.cell(row=current_row, column=1, value="TOTAL")
+        c.font = BOLD_FONT
+        c.alignment = CENTER
+        c.fill = TOTAL_FILL
+        c.border = THIN_BORDER
+
+        # MAE totals (cols B-H)
+        for col_num, field_name in mae_fields.items():
+            if field_name == "Admissions" and config.preferences.subtract_deaths_under_24hrs_from_admissions:
+                formula = (
+                    f'=SUMIFS(tblDaily[Admissions],tblDaily[Month],{month_num},tblDaily[WardCode],"MAE") - '
+                    f'SUMIFS(tblDaily[DeathsUnder24Hrs],tblDaily[Month],{month_num},tblDaily[WardCode],"MAE")'
+                )
+            else:
+                formula = f'=SUMIFS(tblDaily[{field_name}],tblDaily[Month],{month_num},tblDaily[WardCode],"MAE")'
+
+            c = ws.cell(row=current_row, column=col_num, value=formula)
+            c.font = BOLD_FONT
+            c.alignment = CENTER
+            c.fill = TOTAL_FILL
+            c.border = THIN_BORDER
+
+        # FAE totals (cols I-O)
+        for col_num, field_name in fae_fields.items():
+            if field_name == "Admissions" and config.preferences.subtract_deaths_under_24hrs_from_admissions:
+                formula = (
+                    f'=SUMIFS(tblDaily[Admissions],tblDaily[Month],{month_num},tblDaily[WardCode],"FAE") - '
+                    f'SUMIFS(tblDaily[DeathsUnder24Hrs],tblDaily[Month],{month_num},tblDaily[WardCode],"FAE")'
+                )
+            else:
+                formula = f'=SUMIFS(tblDaily[{field_name}],tblDaily[Month],{month_num},tblDaily[WardCode],"FAE")'
+
+            c = ws.cell(row=current_row, column=col_num, value=formula)
+            c.font = BOLD_FONT
+            c.alignment = CENTER
+            c.fill = TOTAL_FILL
+            c.border = THIN_BORDER
+
+        current_row += 2  # Spacer before next month
+
+    # Column widths
+    ws.column_dimensions["A"].width = 5   # Day
+    ws.column_dimensions["B"].width = 6   # MAE Adm
+    ws.column_dimensions["C"].width = 6   # MAE Dis
+    ws.column_dimensions["D"].width = 6   # MAE Dth
+    ws.column_dimensions["E"].width = 6   # MAE D<24
+    ws.column_dimensions["F"].width = 6   # MAE TrIn
+    ws.column_dimensions["G"].width = 6   # MAE TrOut
+    ws.column_dimensions["H"].width = 6   # MAE Rem
+    ws.column_dimensions["I"].width = 6   # FAE Adm
+    ws.column_dimensions["J"].width = 6   # FAE Dis
+    ws.column_dimensions["K"].width = 6   # FAE Dth
+    ws.column_dimensions["L"].width = 6   # FAE D<24
+    ws.column_dimensions["M"].width = 6   # FAE TrIn
+    ws.column_dimensions["N"].width = 6   # FAE TrOut
+    ws.column_dimensions["O"].width = 6   # FAE Rem
+
+    # Print setup
+    ws.page_setup.orientation = "landscape"  # Wider sheet
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToPage = True
+
+
 # ═══════════════════════════════════════════════════════════════════════════════
 # MONTHLY SUMMARY SHEET
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1162,6 +1421,9 @@ def build_structure(config: WorkbookConfig, output_path: str):
     # 3. Ward report sheets (9 wards)
     for ward in config.WARDS:
         build_ward_sheet(wb, config, ward)
+
+    # 3b. Combined Emergency sheet (MAE + FAE side-by-side)
+    build_emergency_combined_sheet(wb, config)
 
     # 4. Monthly Summary
     build_monthly_summary_sheet(wb, config)
