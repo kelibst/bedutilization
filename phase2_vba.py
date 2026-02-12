@@ -464,6 +464,151 @@ Public Sub VerifyCalculations()
     End If
 End Sub
 
+Public Sub FixAllDateFormats()
+    ' Fix date formatting issues across all data tables
+    ' This procedure:
+    ' 1. Applies proper date format to date columns
+    ' 2. Converts text dates to proper date values
+    ' 3. Reports what was fixed
+
+    On Error GoTo ErrorHandler
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    Dim fixCount As Long
+    fixCount = 0
+    Dim report As String
+    report = "DATE FORMAT FIX REPORT" & vbCrLf & String(50, "=") & vbCrLf & vbCrLf
+
+    ' Fix DailyData table
+    Dim wsDailyData As Worksheet
+    Set wsDailyData = ThisWorkbook.Sheets("DailyData")
+    Dim tblDaily As ListObject
+    Set tblDaily = wsDailyData.ListObjects("tblDaily")
+
+    report = report & "DailyData Table:" & vbCrLf
+    ' EntryDate column (col 1)
+    fixCount = fixCount + FixDateColumn(tblDaily, 1, "yyyy-mm-dd", "EntryDate")
+    ' EntryTimestamp column (col 12)
+    fixCount = fixCount + FixDateColumn(tblDaily, 12, "yyyy-mm-dd hh:mm", "EntryTimestamp")
+    report = report & "  - Fixed " & fixCount & " date cells" & vbCrLf & vbCrLf
+
+    ' Fix Admissions table
+    Dim wsAdm As Worksheet
+    Set wsAdm = ThisWorkbook.Sheets("Admissions")
+    Dim tblAdm As ListObject
+    Set tblAdm = wsAdm.ListObjects("tblAdmissions")
+
+    Dim admFixCount As Long
+    report = report & "Admissions Table:" & vbCrLf
+    ' AdmissionDate column (col 2)
+    admFixCount = FixDateColumn(tblAdm, 2, "yyyy-mm-dd", "AdmissionDate")
+    ' EntryTimestamp column (col 11)
+    admFixCount = admFixCount + FixDateColumn(tblAdm, 11, "yyyy-mm-dd hh:mm", "EntryTimestamp")
+    report = report & "  - Fixed " & admFixCount & " date cells" & vbCrLf & vbCrLf
+    fixCount = fixCount + admFixCount
+
+    ' Fix DeathsData table
+    Dim wsDeaths As Worksheet
+    Set wsDeaths = ThisWorkbook.Sheets("DeathsData")
+    Dim tblDeaths As ListObject
+    Set tblDeaths = wsDeaths.ListObjects("tblDeaths")
+
+    Dim deathFixCount As Long
+    report = report & "DeathsData Table:" & vbCrLf
+    ' DateOfDeath column (col 2)
+    deathFixCount = FixDateColumn(tblDeaths, 2, "yyyy-mm-dd", "DateOfDeath")
+    ' EntryTimestamp column (col 13)
+    deathFixCount = deathFixCount + FixDateColumn(tblDeaths, 13, "yyyy-mm-dd hh:mm", "EntryTimestamp")
+    report = report & "  - Fixed " & deathFixCount & " date cells" & vbCrLf & vbCrLf
+    fixCount = fixCount + deathFixCount
+
+    ' Fix TransfersData table
+    Dim wsTrans As Worksheet
+    Set wsTrans = ThisWorkbook.Sheets("TransfersData")
+    Dim tblTrans As ListObject
+    Set tblTrans = wsTrans.ListObjects("tblTransfers")
+
+    Dim transFixCount As Long
+    report = report & "TransfersData Table:" & vbCrLf
+    ' TransferDate column (col 2)
+    transFixCount = FixDateColumn(tblTrans, 2, "yyyy-mm-dd", "TransferDate")
+    ' EntryTimestamp column (col 8)
+    transFixCount = transFixCount + FixDateColumn(tblTrans, 8, "yyyy-mm-dd hh:mm", "EntryTimestamp")
+    report = report & "  - Fixed " & transFixCount & " date cells" & vbCrLf & vbCrLf
+    fixCount = fixCount + transFixCount
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.Calculate
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+
+    report = report & String(50, "=") & vbCrLf
+    report = report & "TOTAL: Fixed " & fixCount & " date cells across all tables"
+
+    MsgBox report, vbInformation, "Date Format Fix Complete"
+    Exit Sub
+
+ErrorHandler:
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    MsgBox "Error fixing date formats: " & Err.Description, vbCritical, "Error"
+End Sub
+
+Private Function FixDateColumn(tbl As ListObject, colIndex As Long, _
+                               dateFormat As String, colName As String) As Long
+    ' Fix a single date column in a table
+    ' Returns: Number of cells fixed
+
+    Dim fixedCount As Long
+    fixedCount = 0
+
+    ' First, apply format to entire column (including empty cells for future entries)
+    On Error Resume Next
+    tbl.ListColumns(colIndex).DataBodyRange.NumberFormat = dateFormat
+    On Error GoTo 0
+
+    ' Now fix any text dates or improperly formatted dates
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        Dim cellVal As Variant
+        cellVal = tbl.ListRows(i).Range(1, colIndex).Value
+
+        ' Skip empty cells
+        If Not IsEmpty(cellVal) And cellVal <> "" Then
+            Dim originalVal As Variant
+            originalVal = cellVal
+
+            ' If it's stored as text but looks like a date, convert it
+            If VarType(cellVal) = vbString Then
+                If IsDate(cellVal) Then
+                    ' Convert text to date
+                    tbl.ListRows(i).Range(1, colIndex).Value = CDate(cellVal)
+                    tbl.ListRows(i).Range(1, colIndex).NumberFormat = dateFormat
+                    fixedCount = fixedCount + 1
+                End If
+            ElseIf IsDate(cellVal) Then
+                ' It's already a date, but ensure format is correct
+                ' Store as value then reformat to ensure consistency
+                Dim tempDate As Date
+                tempDate = CDate(cellVal)
+                tbl.ListRows(i).Range(1, colIndex).Value = tempDate
+                tbl.ListRows(i).Range(1, colIndex).NumberFormat = dateFormat
+
+                ' Only count as fixed if format was different
+                If tbl.ListRows(i).Range(1, colIndex).NumberFormat <> dateFormat Then
+                    fixedCount = fixedCount + 1
+                End If
+            End If
+        End If
+    Next i
+
+    FixDateColumn = fixedCount
+End Function
+
 Public Sub ImportFromOldWorkbook()
     ' Import data from a previous workbook (backward compatibility)
     ' Copies INPUT columns only and recalculates everything
@@ -2190,7 +2335,7 @@ Private Sub btnSave_Click()
 
     ' Post-Save Reset
     lblStatus.Caption = "Saved: " & age & " " & unit & " (" & sex & ", " & nhis & ")"
-    lblStatus.ForeColor = &H8000& ' Green
+    lblStatus.ForeColor = RGB(0, 128, 0) ' Green
 
     txtAge.Value = ""
     cmbAgeUnit.ListIndex = 0 ' Reset to Years
@@ -3366,7 +3511,7 @@ def create_nav_buttons(wb):
     ws = wb.Sheets("Control")
 
     # Remove placeholder text (now the cells themselves will have the text)
-    for row in [9, 11, 13, 15, 17, 19, 21, 23, 26, 28, 30]:  # All button rows
+    for row in [9, 11, 13, 15, 17, 19, 21, 23, 25, 27, 29, 31, 33, 35]:  # All button rows
         ws.Range(f"A{row}:C{row}").ClearContents
 
     # Set cell values which will become button captions
@@ -3392,18 +3537,58 @@ def create_nav_buttons(wb):
     # Rebuild button (special orange button)
     _add_sheet_button(ws, "btnRebuild", "Control!A27:C27", "RebuildWorkbookWithPreferences")
 
-    # Diagnostic buttons (row 29, 31, 33 for spacing)
+    # Diagnostic buttons (row 29, 31, 33, 35 for spacing)
     ws.Range("A29").Value = "Import from Old Workbook"
     ws.Range("A31").Value = "Recalculate All Data"
     ws.Range("A33").Value = "Verify Calculations"
+    ws.Range("A35").Value = "Fix Date Formats"
     _add_sheet_button(ws, "btnImport", "Control!A29:C29", "ImportFromOldWorkbook")
     _add_sheet_button(ws, "btnRecalcAll", "Control!A31:C31", "RecalculateAllRows")
     _add_sheet_button(ws, "btnVerify", "Control!A33:C33", "VerifyCalculations")
+    _add_sheet_button(ws, "btnFixDates", "Control!A35:C35", "FixAllDateFormats")
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MAIN INJECTION FUNCTION
 # ═══════════════════════════════════════════════════════════════════════════════
+
+def initialize_date_formats(wb):
+    """
+    Initialize date column formats for all data tables.
+    This ensures date columns are properly formatted from the start.
+    """
+    # DailyData - EntryDate (col A) and EntryTimestamp (col L)
+    try:
+        daily_tbl = wb.Sheets("DailyData").ListObjects("tblDaily")
+        daily_tbl.ListColumns(1).DataBodyRange.NumberFormat = "yyyy-mm-dd"
+        daily_tbl.ListColumns(12).DataBodyRange.NumberFormat = "yyyy-mm-dd hh:mm"
+    except Exception as e:
+        print(f"    Warning: Could not format DailyData columns: {e}")
+
+    # Admissions - AdmissionDate (col B) and EntryTimestamp (col K)
+    try:
+        adm_tbl = wb.Sheets("Admissions").ListObjects("tblAdmissions")
+        adm_tbl.ListColumns(2).DataBodyRange.NumberFormat = "yyyy-mm-dd"
+        adm_tbl.ListColumns(11).DataBodyRange.NumberFormat = "yyyy-mm-dd hh:mm"
+    except Exception as e:
+        print(f"    Warning: Could not format Admissions columns: {e}")
+
+    # DeathsData - DateOfDeath (col B) and EntryTimestamp (col M)
+    try:
+        deaths_tbl = wb.Sheets("DeathsData").ListObjects("tblDeaths")
+        deaths_tbl.ListColumns(2).DataBodyRange.NumberFormat = "yyyy-mm-dd"
+        deaths_tbl.ListColumns(13).DataBodyRange.NumberFormat = "yyyy-mm-dd hh:mm"
+    except Exception as e:
+        print(f"    Warning: Could not format DeathsData columns: {e}")
+
+    # TransfersData - TransferDate (col B) and EntryTimestamp (col H)
+    try:
+        trans_tbl = wb.Sheets("TransfersData").ListObjects("tblTransfers")
+        trans_tbl.ListColumns(2).DataBodyRange.NumberFormat = "yyyy-mm-dd"
+        trans_tbl.ListColumns(8).DataBodyRange.NumberFormat = "yyyy-mm-dd hh:mm"
+    except Exception as e:
+        print(f"    Warning: Could not format TransfersData columns: {e}")
+
 
 def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
     """Open xlsx in Excel via COM, inject VBA, save as xlsm."""
@@ -3412,8 +3597,15 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
     abs_xlsx = os.path.abspath(xlsx_path)
     abs_xlsm = os.path.abspath(xlsm_path)
 
+    # Verify xlsx file exists
+    if not os.path.exists(abs_xlsx):
+        raise FileNotFoundError(f"Cannot find xlsx file: {abs_xlsx}")
+
+    print(f"Opening file: {abs_xlsx}")
+
     # Remove existing xlsm if it exists
     if os.path.exists(abs_xlsm):
+        print(f"Removing existing xlsm: {abs_xlsm}")
         os.remove(abs_xlsm)
 
     print("Starting Excel for VBA injection...")
@@ -3421,8 +3613,21 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
     excel.Visible = False
     excel.DisplayAlerts = False
 
+    # Give Excel a moment to fully initialize
+    time.sleep(1)
+
     try:
-        wb = excel.Workbooks.Open(abs_xlsx)
+        # Use forward slashes for path (more reliable with COM)
+        xlsx_path_normalized = abs_xlsx.replace('\\', '/')
+        print(f"Opening workbook: {xlsx_path_normalized}")
+
+        # Open with explicit parameters to avoid issues
+        wb = excel.Workbooks.Open(
+            xlsx_path_normalized,
+            UpdateLinks=0,
+            ReadOnly=False,
+            IgnoreReadOnlyRecommended=True
+        )
         vbproj = wb.VBProject
 
         # 1. Inject standard modules
@@ -3486,6 +3691,10 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
         wb.Sheets("DeathsData").Visible = 0
         wb.Sheets("TransfersData").Visible = 0
 
+        # 5.5. Initialize date column formats
+        print("  Initializing date column formats...")
+        initialize_date_formats(wb)
+
         # 6. Save as .xlsm (FileFormat 52)
         print(f"  Saving as {abs_xlsm}...")
         wb.SaveAs(abs_xlsm, FileFormat=52)
@@ -3494,10 +3703,27 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
         print(f"Phase 2 complete: {abs_xlsm}")
 
     except Exception as e:
-        print(f"ERROR during VBA injection: {e}")
-        print("\nCommon fix: In Excel, go to:")
-        print("  File > Options > Trust Center > Trust Center Settings")
-        print("  > Macro Settings > Check 'Trust access to the VBA project object model'")
+        print(f"\nERROR during VBA injection: {e}")
+        print(f"Error type: {type(e).__name__}")
+
+        # Provide specific troubleshooting based on error
+        if "VBProject" in str(e) or "Programmatic access" in str(e):
+            print("\nFIX: Enable VBA project access in Excel:")
+            print("  1. Open Excel")
+            print("  2. File > Options > Trust Center > Trust Center Settings")
+            print("  3. Macro Settings > Check 'Trust access to the VBA project object model'")
+            print("  4. Click OK and restart Excel")
+        elif "Open" in str(e):
+            print("\nPossible causes:")
+            print(f"  - File exists: {os.path.exists(abs_xlsx)}")
+            print(f"  - File path: {abs_xlsx}")
+            print(f"  - File readable: {os.access(abs_xlsx, os.R_OK)}")
+            print("\nTroubleshooting:")
+            print("  1. Try opening the .xlsx file manually in Excel first")
+            print("  2. Check if file is corrupted")
+            print("  3. Close all Excel windows and try again")
+            print("  4. Check antivirus isn't blocking file access")
+
         try:
             wb.Close(SaveChanges=False)
         except:

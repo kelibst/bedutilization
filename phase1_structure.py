@@ -112,6 +112,7 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
         (29, "[ IMPORT OLD WORKBOOK ]",    "Import data from previous workbook format"),
         (31, "[ RECALCULATE ALL DATA ]",   "Recalculate all remaining values"),
         (33, "[ VERIFY CALCULATIONS ]",    "Verify calculation accuracy"),
+        (35, "[ FIX DATE FORMATS ]",       "Fix date formatting issues in all data tables"),
     ]
     for row, label, desc in buttons:
         ws.merge_cells(f"A{row}:C{row}")

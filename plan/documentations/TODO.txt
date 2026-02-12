@@ -9,3 +9,10 @@ Update the app so that users can migrate from any excel format to this new one,.
 because <24 hour deaths are not being counted, we should include the option for the user to add a calculation to remove it from the total admission at the end 
 of every months and for each ward. evaluate this carefully before you implement it.
 
+there is an error when i try to select an entry on the age entry form. and also the dates are all stuck on the 1 of january for all the entries.
+
+the dates on most of the forms are not of date type so when i select an entry and try to edit it, it give me a date error. so make a proper accessment of all of the dates and 
+let's proceed to fixing them one after the other.
+
+the import from previous workbook does not properly import the remaining at midnight from the control panel. and also I wonder how it will import from other excel files that have 
+completely different format. but for now let's focus on the import from previous workbook. 
