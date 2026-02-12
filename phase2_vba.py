@@ -3608,26 +3608,68 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
         print(f"Removing existing xlsm: {abs_xlsm}")
         os.remove(abs_xlsm)
 
-    print("Starting Excel for VBA injection...")
-    excel = win32com.client.Dispatch("Excel.Application")
-    excel.Visible = False
-    excel.DisplayAlerts = False
-
-    # Give Excel a moment to fully initialize
-    time.sleep(1)
-
+    # Pre-flight checks
+    print("Performing pre-flight checks...")
+    
+    # Check if file is already open in Excel
     try:
-        # Use forward slashes for path (more reliable with COM)
-        xlsx_path_normalized = abs_xlsx.replace('\\', '/')
+        import psutil
+        excel_processes = [p for p in psutil.process_iter(['name', 'open_files']) if p.info['name'] and 'excel' in p.info['name'].lower()]
+        for proc in excel_processes:
+            try:
+                if proc.info['open_files']:
+                    for file in proc.info['open_files']:
+                        if abs_xlsx in file.path:
+                            print(f"\n⚠️  WARNING: File is already open in Excel (PID: {proc.pid})")
+                            print("Please close the file in Excel and try again.")
+                            raise RuntimeError(f"File is already open: {abs_xlsx}")
+            except (psutil.AccessDenied, psutil.NoSuchProcess):
+                pass
+    except ImportError:
+        # psutil not available, skip this check
+        print("  (psutil not available, skipping open file check)")
+    
+    print("Starting Excel for VBA injection...")
+    excel = None
+    wb = None
+    
+    try:
+        excel = win32com.client.Dispatch("Excel.Application")
+        excel.Visible = False
+        excel.DisplayAlerts = False
+        
+        # Give Excel a moment to fully initialize
+        time.sleep(1)
+        
+        # Use standard Windows paths (backslashes) which are reliable for local files
+        xlsx_path_normalized = abs_xlsx
         print(f"Opening workbook: {xlsx_path_normalized}")
-
-        # Open with explicit parameters to avoid issues
-        wb = excel.Workbooks.Open(
-            xlsx_path_normalized,
-            UpdateLinks=0,
-            ReadOnly=False,
-            IgnoreReadOnlyRecommended=True
-        )
+        
+        # Try opening with retry logic (sometimes COM needs a moment)
+        max_retries = 3
+        retry_delay = 2
+        
+        for attempt in range(max_retries):
+            try:
+                # Open with explicit parameters to avoid issues
+                wb = excel.Workbooks.Open(
+                    xlsx_path_normalized,
+                    UpdateLinks=0,
+                    ReadOnly=False,
+                    IgnoreReadOnlyRecommended=True,
+                    Notify=False
+                )
+                print("  ✓ Workbook opened successfully")
+                break
+            except Exception as open_error:
+                if attempt < max_retries - 1:
+                    print(f"  Attempt {attempt + 1} failed, retrying in {retry_delay}s...")
+                    time.sleep(retry_delay)
+                else:
+                    raise open_error
+        
+        if wb is None:
+            raise RuntimeError("Failed to open workbook after all retries")
         vbproj = wb.VBProject
 
         # 1. Inject standard modules

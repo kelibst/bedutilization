@@ -13,6 +13,7 @@ Prerequisites:
 import argparse
 import os
 import sys
+import time
 from datetime import datetime
 from config import WorkbookConfig
 from phase1_structure import build_structure
@@ -71,8 +72,34 @@ def main():
         print(f"\nDone (VBA skipped). Open {xlsx_path} in Excel.")
         return
 
+    # Clean up openpyxl objects to ensure file handles are released
+    import gc
+    gc.collect()
+
     # Phase 2: Inject VBA with win32com
     print(f"\n--- Phase 2: Injecting VBA macros ---")
+    
+    # Wait for file to be truly ready (antivirus, disk write)
+    print("Waiting for file system to settle...")
+    time.sleep(2)
+    
+    # Verify file is accessible
+    max_checks = 10
+    file_ready = False
+    for i in range(max_checks):
+        try:
+            with open(xlsx_path, 'rb') as f:
+                pass
+            file_ready = True
+            break
+        except Exception:
+            print(f"  Waiting for file access... ({i+1}/{max_checks})")
+            time.sleep(1)
+            
+    if not file_ready:
+        print("ERROR: Timeout waiting for file access. Something is locking the file.")
+        sys.exit(1)
+
     try:
         inject_vba(xlsx_path, xlsm_path, config)
     except Exception as e:

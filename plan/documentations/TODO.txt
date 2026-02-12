@@ -16,3 +16,6 @@ let's proceed to fixing them one after the other.
 
 the import from previous workbook does not properly import the remaining at midnight from the control panel. and also I wonder how it will import from other excel files that have 
 completely different format. but for now let's focus on the import from previous workbook. 
+
+organize the files properly. move the 
+scripts into a scripts folder. 

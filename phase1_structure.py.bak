@@ -143,7 +143,7 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
         ws.cell(row=row, column=4, value=desc).font = NORMAL_FONT
 
     # ── Ward Configuration Table ─────────────────────────────────────────
-    config_start = 37  # Row for section header (after all buttons)
+    config_start = 35  # Row for section header (after all buttons)
 
     # Section header for ward configuration
     ws.merge_cells(f"A{config_start}:F{config_start}")
@@ -256,6 +256,7 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
     ws.column_dimensions["F"].width = 14
     ws.column_dimensions["G"].width = 14
     ws.column_dimensions["H"].width = 14
+
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # DATA SHEETS (hidden tables)
