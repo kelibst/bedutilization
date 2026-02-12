@@ -692,6 +692,13 @@ def build_emergency_combined_sheet(wb: Workbook, config: WorkbookConfig):
         c.alignment = CENTER
         c.border = THIN_BORDER
 
+        # Total Header
+        c = ws.cell(row=current_row, column=16, value="TOTAL")
+        c.font = HEADER_FONT_WHITE
+        c.fill = PatternFill(start_color="70AD47", end_color="70AD47", fill_type="solid")  # Green
+        c.alignment = CENTER
+        c.border = THIN_BORDER
+
         current_row += 1
 
         # Row 2: Field headers
@@ -702,7 +709,9 @@ def build_emergency_combined_sheet(wb: Workbook, config: WorkbookConfig):
             (6, "TrIn"), (7, "TrOut"), (8, "Rem"),
             # Female Emergency columns
             (9, "Adm"), (10, "Dis"), (11, "Dth"), (12, "D<24"),
-            (13, "TrIn"), (14, "TrOut"), (15, "Rem")
+            (13, "TrIn"), (14, "TrOut"), (15, "Rem"),
+            # Total Column
+            (16, "Tot\nRem")
         ]
 
         for col_num, header_text in field_headers:
@@ -751,9 +760,27 @@ def build_emergency_combined_sheet(wb: Workbook, config: WorkbookConfig):
                     c = ws.cell(row=current_row, column=col_num, value=formula)
                     c.alignment = CENTER
                     c.border = THIN_BORDER
+
+                # Total Remaining (Col P = Col H + Col O)
+                # Check directly if cells have numbers to avoid summing text
+                mae_rem = f"H{current_row}"
+                fae_rem = f"O{current_row}"
+                formula = f'=IF(AND(ISNUMBER({mae_rem}), ISNUMBER({fae_rem})), {mae_rem} + {fae_rem}, IF(ISNUMBER({mae_rem}), {mae_rem}, IF(ISNUMBER({fae_rem}), {fae_rem}, "")))'
+                
+                # Simpler: just sum them, treating text as 0 is standard SUM behavior but + operator needs numbers
+                # Actually, our formulas return "" if 0. 
+                # Better formula: =N(H_row) + N(O_row) but we want "" if both are empty.
+                # Let's use: =IF(AND(H="" , O=""), "", N(H)+N(O))
+                formula = f'=IF(AND({mae_rem}="", {fae_rem}=""), "", N({mae_rem}) + N({fae_rem}))'
+
+                c = ws.cell(row=current_row, column=16, value=formula)
+                c.alignment = CENTER
+                c.border = THIN_BORDER
+                c.font = BOLD_FONT
+
             else:
                 # Gray out invalid days
-                for col_num in range(2, 16):  # Cols B-O
+                for col_num in range(2, 17):  # Cols B-P
                     c = ws.cell(row=current_row, column=col_num)
                     c.fill = GRAY_FILL
                     c.border = THIN_BORDER
@@ -799,6 +826,18 @@ def build_emergency_combined_sheet(wb: Workbook, config: WorkbookConfig):
             c.fill = TOTAL_FILL
             c.border = THIN_BORDER
 
+        # Total Remaining Sum (Col P)
+        # It's sum of daily remainings (Patient Days)
+        # = SUM(Col P daily rows) OR Sum of MAE Rem Total + FAE Rem Total
+        mae_rem_tot = f"H{current_row}"
+        fae_rem_tot = f"O{current_row}"
+        formula = f'={mae_rem_tot} + {fae_rem_tot}'
+        c = ws.cell(row=current_row, column=16, value=formula)
+        c.font = BOLD_FONT
+        c.alignment = CENTER
+        c.fill = TOTAL_FILL
+        c.border = THIN_BORDER
+
         current_row += 2  # Spacer before next month
 
     # Column widths
@@ -817,6 +856,7 @@ def build_emergency_combined_sheet(wb: Workbook, config: WorkbookConfig):
     ws.column_dimensions["M"].width = 6   # FAE TrIn
     ws.column_dimensions["N"].width = 6   # FAE TrOut
     ws.column_dimensions["O"].width = 6   # FAE Rem
+    ws.column_dimensions["P"].width = 8   # Tot Rem
 
     # Print setup
     ws.page_setup.orientation = "landscape"  # Wider sheet

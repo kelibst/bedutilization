@@ -694,6 +694,40 @@ Public Sub ImportFromOldWorkbook()
         End If
     End If
 
+    ' ── NEW: Import Ward Configuration (PrevYearRemaining) ──
+    ' This ensures that the starting values for calculations are preserved
+    On Error Resume Next
+    Dim oldConfigTbl As ListObject
+    Set oldConfigTbl = oldWB.Sheets("Control").ListObjects("tblWardConfig")
+    On Error GoTo ErrorHandler
+
+    If Not oldConfigTbl Is Nothing Then
+        Dim newConfigTbl As ListObject
+        Set newConfigTbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
+        
+        Dim r As Long
+        For r = 1 To newConfigTbl.ListRows.Count
+            Dim wCode As String
+            wCode = newConfigTbl.ListRows(r).Range(1, 1).Value
+            
+            ' Find ward in old table
+            Dim oldR As Long
+            For oldR = 1 To oldConfigTbl.ListRows.Count
+                If oldConfigTbl.ListRows(oldR).Range(1, 1).Value = wCode Then
+                    ' Copy PrevYearRemaining (Col 4)
+                    ' Only if old value is numeric
+                    Dim oldVal As Variant
+                    oldVal = oldConfigTbl.ListRows(oldR).Range(1, 4).Value
+                    If IsNumeric(oldVal) Then
+                        newConfigTbl.ListRows(r).Range(1, 4).Value = oldVal
+                    End If
+                    Exit For
+                End If
+            Next oldR
+        Next r
+    End If
+    ' ────────────────────────────────────────────────────────
+
     ' Import each row from old workbook
     Dim i As Long
     For i = 1 To oldTbl.ListRows.Count
@@ -1251,6 +1285,7 @@ Public Sub ExportWardsConfig()
         jsonStr = jsonStr & "      ""code"": """ & tbl.ListRows(i).Range(1, 1).Value & """," & vbCrLf
         jsonStr = jsonStr & "      ""name"": """ & tbl.ListRows(i).Range(1, 2).Value & """," & vbCrLf
         jsonStr = jsonStr & "      ""bed_complement"": " & tbl.ListRows(i).Range(1, 3).Value & "," & vbCrLf
+        jsonStr = jsonStr & "      ""prev_year_remaining"": " & tbl.ListRows(i).Range(1, 4).Value & "," & vbCrLf
 
         Dim isEmerg As Boolean
         isEmerg = tbl.ListRows(i).Range(1, 5).Value
@@ -2295,7 +2330,7 @@ Private Sub lstRecent_Click()
     End If
 
     lblStatus.Caption = "Loaded entry for editing"
-    lblStatus.ForeColor = &H0080FF ' Orange
+    lblStatus.ForeColor = RGB(255, 128, 0) ' Orange
     txtAge.SetFocus
 End Sub
 
@@ -3732,6 +3767,14 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
         wb.Sheets("Admissions").Visible = 0
         wb.Sheets("DeathsData").Visible = 0
         wb.Sheets("TransfersData").Visible = 0
+
+        # Hide individual emergency sheets by default
+        try:
+            wb.Sheets("Male Emergency").Visible = 0
+            wb.Sheets("Female Emergency").Visible = 0
+        except:
+            pass
+
 
         # 5.5. Initialize date column formats
         print("  Initializing date column formats...")
