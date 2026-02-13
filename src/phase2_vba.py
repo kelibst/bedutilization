@@ -876,12 +876,29 @@ Public Sub ImportFromOldWorkbook()
 
     ' Import each row from old workbook
     Dim i As Long
+    Dim importErrors As Long
+    importErrors = 0
+    Dim errorLog As String
+    
     For i = 1 To oldTbl.ListRows.Count
+        ' Error handling for individual rows
+        On Error Resume Next
+        
         ' Check if row has data
         Dim oldDate As Variant
         oldDate = oldTbl.ListRows(i).Range(1, 1).Value
+        
+        ' Skip if cell has error or is not a date
+        Dim isValidDate As Boolean
+        isValidDate = False
+        
+        If Not IsError(oldDate) Then
+            If IsDate(oldDate) And oldDate <> "" Then
+                isValidDate = True
+            End If
+        End If
 
-        If IsDate(oldDate) Then
+        If isValidDate Then
             ' Determine target row
             Dim newRow As ListRow
             If useSeedRow And importCount = 0 Then
@@ -890,10 +907,11 @@ Public Sub ImportFromOldWorkbook()
                 Set newRow = newTbl.ListRows.Add
             End If
 
-            ' Copy INPUT columns only (1-9)
-            ' Skip calculated columns (10-11) - will be recalculated
+            ' Copy INPUT columns only (1-9) with safety checks
             With newRow.Range
-                .Cells(1, 1).Value = oldTbl.ListRows(i).Range(1, 1).Value ' EntryDate
+                .Cells(1, 1).Value = oldDate ' EntryDate
+                
+                ' Helper to safely copy values
                 .Cells(1, 2).Value = oldTbl.ListRows(i).Range(1, 2).Value ' Month
                 .Cells(1, 3).Value = oldTbl.ListRows(i).Range(1, 3).Value ' WardCode
                 .Cells(1, 4).Value = oldTbl.ListRows(i).Range(1, 4).Value ' Admissions
@@ -902,12 +920,22 @@ Public Sub ImportFromOldWorkbook()
                 .Cells(1, 7).Value = oldTbl.ListRows(i).Range(1, 7).Value ' DeathsU24
                 .Cells(1, 8).Value = oldTbl.ListRows(i).Range(1, 8).Value ' TransfersIn
                 .Cells(1, 9).Value = oldTbl.ListRows(i).Range(1, 9).Value ' TransfersOut
+                
                 ' Columns 10-11: Will be calculated after import
                 .Cells(1, 12).Value = Now ' New timestamp
             End With
 
-            importCount = importCount + 1
+            If Err.Number <> 0 Then
+                importErrors = importErrors + 1
+                If importErrors <= 5 Then
+                    errorLog = errorLog & "Row " & i & ": " & Err.Description & vbCrLf
+                End If
+                Err.Clear
+            Else
+                importCount = importCount + 1
+            End If
         End If
+        On Error GoTo ErrorHandler ' Restore main handler
     Next i
 
     ' Close old workbook
@@ -930,9 +958,16 @@ Public Sub ImportFromOldWorkbook()
     Application.ScreenUpdating = True
     Application.EnableEvents = True
 
-    MsgBox "Successfully imported " & importCount & " rows!" & vbCrLf & vbCrLf & _
-           "All calculations have been recalculated automatically.", _
-           vbInformation, "Import Complete"
+    Dim msg As String
+    msg = "Successfully imported " & importCount & " rows!" & vbCrLf & _
+          "All calculations have been recalculated automatically."
+          
+    If importErrors > 0 Then
+        msg = msg & vbCrLf & vbCrLf & "WARNING: " & importErrors & " rows failed to import." & vbCrLf & _
+              "First 5 errors:" & vbCrLf & errorLog
+    End If
+
+    MsgBox msg, vbInformation, "Import Complete"
     Exit Sub
 
 ErrorHandler:
@@ -952,7 +987,7 @@ End Sub
 ' DATA SAVE OPERATIONS
 '===================================================================
 
-Public Sub SaveAdmission(admDate As Date, wardCode As String, _
+Public Sub SaveAdmission(admDate As Variant, wardCode As String, _
     patientID As String, patientName As String, _
     age As Long, ageUnit As String, sex As String, nhis As String)
 
@@ -971,14 +1006,24 @@ Public Sub SaveAdmission(admDate As Date, wardCode As String, _
 
     With targetRow.Range
         .Cells(1, COL_ADM_ID).Value = newID
-        .Cells(1, COL_ADM_DATE).Value = admDate
+        
+        ' Handle date - try to convert if acceptable, otherwise leave as is (which might fail formatting but saves data)
+        If IsDate(admDate) Then
+            .Cells(1, COL_ADM_DATE).Value = CDate(admDate)
+        Else
+            .Cells(1, COL_ADM_DATE).Value = admDate
+        End If
 
         ' IMPORTANT: Date columns must be formatted explicitly
         ' Excel may store dates as text if format isn't set
         ' See initialize_date_formats() in phase2_vba.py for column setup
         .Cells(1, COL_ADM_DATE).NumberFormat = "yyyy-mm-dd"
 
-        .Cells(1, COL_ADM_MONTH).Value = Month(admDate)
+        If IsDate(admDate) Then
+            .Cells(1, COL_ADM_MONTH).Value = Month(CDate(admDate))
+        Else
+            .Cells(1, COL_ADM_MONTH).Value = 0
+        End If
         .Cells(1, COL_ADM_WARD_CODE).Value = wardCode
         .Cells(1, COL_ADM_PATIENT_ID).Value = patientID
         .Cells(1, COL_ADM_PATIENT_NAME).Value = patientName
@@ -991,7 +1036,7 @@ Public Sub SaveAdmission(admDate As Date, wardCode As String, _
     End With
 End Sub
 
-Public Sub SaveDeath(deathDate As Date, wardCode As String, _
+Public Sub SaveDeath(deathDate As Variant, wardCode As String, _
     folderNum As String, deceasedName As String, _
     age As Long, ageUnit As String, sex As String, _
     nhis As String, causeOfDeath As String, within24 As Boolean)
@@ -1011,14 +1056,23 @@ Public Sub SaveDeath(deathDate As Date, wardCode As String, _
 
     With targetRow.Range
         .Cells(1, COL_DEATH_ID).Value = newID
-        .Cells(1, COL_DEATH_DATE).Value = deathDate
+        
+        If IsDate(deathDate) Then
+            .Cells(1, COL_DEATH_DATE).Value = CDate(deathDate)
+        Else
+            .Cells(1, COL_DEATH_DATE).Value = deathDate
+        End If
 
         ' IMPORTANT: Date columns must be formatted explicitly
         ' Excel may store dates as text if format isn't set
         ' See initialize_date_formats() in phase2_vba.py for column setup
         .Cells(1, COL_DEATH_DATE).NumberFormat = "yyyy-mm-dd"
 
-        .Cells(1, COL_DEATH_MONTH).Value = Month(deathDate)
+        If IsDate(deathDate) Then
+            .Cells(1, COL_DEATH_MONTH).Value = Month(CDate(deathDate))
+        Else
+            .Cells(1, COL_DEATH_MONTH).Value = 0
+        End If
         .Cells(1, COL_DEATH_WARD_CODE).Value = wardCode
         .Cells(1, COL_DEATH_FOLDER_NUM).Value = folderNum
         .Cells(1, COL_DEATH_NAME).Value = deceasedName
@@ -2198,11 +2252,11 @@ Private Sub UpdateRecentList()
 
     Dim i As Long
     For i = startRow To tbl.ListRows.Count
-        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
-           tbl.ListRows(i).Range(1, 1).Value <> "" Then
-            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
-                tbl.ListRows(i).Range(1, 6).Value & " | " & _
-                tbl.ListRows(i).Range(1, 4).Value & " | Age: " & _
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
+           tbl.ListRows(i).Range(1, 2).Value <> "" Then
+            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 2).Value, "dd/mm/yyyy") & " | " & _
+                tbl.ListRows(i).Range(1, 4).Value & " | " & _
+                tbl.ListRows(i).Range(1, 6).Value & " | Age: " & _
                 tbl.ListRows(i).Range(1, 7).Value
         End If
     Next i
@@ -2228,11 +2282,11 @@ Private Sub lstRecent_Click()
     editingRowIndex = actualRow
 
     ' Load the selected entry
-    txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 1).Value, "dd/mm/yyyy")
+    txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 2).Value, "dd/mm/yyyy")
 
     ' Load ward
     Dim wc As String
-    wc = tbl.ListRows(actualRow).Range(1, 6).Value
+    wc = tbl.ListRows(actualRow).Range(1, 4).Value
     Dim j As Long
     For j = 0 To UBound(wardCodes)
         If wardCodes(j) = wc Then
@@ -2242,8 +2296,8 @@ Private Sub lstRecent_Click()
     Next j
 
     ' Load patient details
-    txtPatientID.Value = tbl.ListRows(actualRow).Range(1, 2).Value
-    txtPatientName.Value = tbl.ListRows(actualRow).Range(1, 4).Value
+    txtPatientID.Value = tbl.ListRows(actualRow).Range(1, 5).Value
+    txtPatientName.Value = tbl.ListRows(actualRow).Range(1, 6).Value
     txtAge.Value = CStr(tbl.ListRows(actualRow).Range(1, 7).Value)
     cmbAgeUnit.Value = tbl.ListRows(actualRow).Range(1, 8).Value
 
@@ -2307,12 +2361,17 @@ Private Function SaveAdmissionEntry() As Boolean
         Exit Function
     End If
 
-    Dim admDate As Date
-    admDate = ParseDateAdm(txtDate.Value)
-    If admDate = #1/1/1900# Then
-        MsgBox "Please enter a valid date (dd/mm/yyyy).", vbExclamation
+    Dim admDate As Variant
+    admDate = Trim(txtDate.Value)
+    
+    If Not IsDate(admDate) Then
+        MsgBox "Please enter a valid date (e.g., 14/02/2026).", vbExclamation
+        txtDate.SetFocus
         Exit Function
     End If
+    
+    ' Convert to real date to ensure consistency
+    admDate = CDate(admDate)
 
     If Trim(txtAge.Value) = "" Or Not IsNumeric(txtAge.Value) Then
         MsgBox "Please enter a valid age.", vbExclamation
@@ -2347,7 +2406,7 @@ Private Function SaveAdmissionEntry() As Boolean
     SaveAdmissionEntry = True
 End Function
 
-Private Sub UpdateAdmissionRow(rowIndex As Long, admDate As Date, wardCode As String, _
+Private Sub UpdateAdmissionRow(rowIndex As Long, admDate As Variant, wardCode As String, _
     patientID As String, patientName As String, _
     age As Long, ageUnit As String, sex As String, nhis As String)
     ' Update existing row instead of creating new one
@@ -2434,25 +2493,8 @@ Private Sub UserForm_Initialize()
     Next i
     If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
 
-    ' Date defaults (same as Daily)
-    cmbMonth.AddItem "JANUARY"
-    cmbMonth.AddItem "FEBRUARY"
-    cmbMonth.AddItem "MARCH"
-    cmbMonth.AddItem "APRIL"
-    cmbMonth.AddItem "MAY"
-    cmbMonth.AddItem "JUNE"
-    cmbMonth.AddItem "JULY"
-    cmbMonth.AddItem "AUGUST"
-    cmbMonth.AddItem "SEPTEMBER"
-    cmbMonth.AddItem "OCTOBER"
-    cmbMonth.AddItem "NOVEMBER"
-    cmbMonth.AddItem "DECEMBER"
-    cmbMonth.ListIndex = Month(Date) - 1
-
-    spnDay.Min = 1
-    spnDay.Max = 31
-    spnDay.Value = Day(Date)
-    txtDay.Value = CStr(Day(Date))
+    ' Date defaults
+    txtDate.Value = Format(Date, "dd/mm/yyyy")
 
     ' Age Units
     cmbAgeUnit.AddItem "Years"
@@ -2480,9 +2522,9 @@ Private Sub UpdateRecentList()
 
     Dim i As Long
     For i = startRow To tbl.ListRows.Count
-        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
-           tbl.ListRows(i).Range(1, 1).Value <> "" Then
-            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
+           tbl.ListRows(i).Range(1, 2).Value <> "" Then
+            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 2).Value, "dd/mm/yyyy") & " | " & _
                 tbl.ListRows(i).Range(1, 6).Value & " | " & _
                 tbl.ListRows(i).Range(1, 7).Value & " " & _
                 tbl.ListRows(i).Range(1, 8).Value & " | " & _
@@ -2515,7 +2557,7 @@ Private Sub lstRecent_Click()
     ' Load the selected entry
     Dim entryDate As Date
     Dim dateVal As Variant
-    dateVal = tbl.ListRows(actualRow).Range(1, 1).Value
+    dateVal = tbl.ListRows(actualRow).Range(1, 2).Value
 
     ' Validate date value
     If IsEmpty(dateVal) Or Not IsDate(dateVal) Then
@@ -2535,9 +2577,7 @@ Private Sub lstRecent_Click()
         Exit Sub
     End If
 
-    cmbMonth.ListIndex = Month(entryDate) - 1
-    spnDay.Value = Day(entryDate)
-    txtDay.Value = CStr(Day(entryDate))
+    txtDate.Value = Format(entryDate, "dd/mm/yyyy")
 
     ' Load ward
     Dim wc As String
@@ -2590,70 +2630,18 @@ Private Sub btnSave_Click()
         Exit Sub
     End If
 
-    ' Read month and day from TEXT values (not control state)
-    ' This prevents issues if controls lose state before save
-    Dim monthName As String
-    monthName = Trim(cmbMonth.Value)
-
-    Dim dayText As String
-    dayText = Trim(txtDay.Value)
-
-    ' Convert month name to month number
-    Dim monthNum As Long
-    Select Case UCase(monthName)
-        Case "JANUARY": monthNum = 1
-        Case "FEBRUARY": monthNum = 2
-        Case "MARCH": monthNum = 3
-        Case "APRIL": monthNum = 4
-        Case "MAY": monthNum = 5
-        Case "JUNE": monthNum = 6
-        Case "JULY": monthNum = 7
-        Case "AUGUST": monthNum = 8
-        Case "SEPTEMBER": monthNum = 9
-        Case "OCTOBER": monthNum = 10
-        Case "NOVEMBER": monthNum = 11
-        Case "DECEMBER": monthNum = 12
-        Case Else
-            MsgBox "Invalid month selected: " & monthName & vbCrLf & "Please select a valid month.", vbExclamation, "Invalid Month"
-            cmbMonth.SetFocus
-            Exit Sub
-    End Select
-
-    ' Convert day text to number
-    Dim dayNum As Long
-    If Not IsNumeric(dayText) Then
-        MsgBox "Invalid day value: " & dayText & vbCrLf & "Please enter a valid day (1-31).", vbExclamation, "Invalid Day"
-        txtDay.SetFocus
+    ' Validate Date
+    Dim dateStr As String
+    dateStr = Trim(txtDate.Value)
+    
+    If Not IsDate(dateStr) Then
+        MsgBox "Please enter a valid date (e.g. 15/02/2026).", vbExclamation
+        txtDate.SetFocus
         Exit Sub
     End If
-    dayNum = CLng(dayText)
-
-    If dayNum < 1 Or dayNum > 31 Then
-        MsgBox "Day must be between 1 and 31. You entered: " & dayNum, vbExclamation, "Invalid Day"
-        txtDay.SetFocus
-        Exit Sub
-    End If
-
-    Dim yr As Long
-    yr = GetReportYear()
-
-    ' DIAGNOSTIC: Log values being used for date construction
-    Debug.Print "=== Ages Entry Date Construction ==="
-    Debug.Print "Year: " & yr
-    Debug.Print "Month Name: " & monthName
-    Debug.Print "Month Number: " & monthNum
-    Debug.Print "Day Text: " & dayText
-    Debug.Print "Day Number: " & dayNum
-    Debug.Print "cmbMonth.ListIndex: " & cmbMonth.ListIndex
-    Debug.Print "spnDay.Value: " & spnDay.Value
-
+    
     Dim dt As Date
-    On Error GoTo DateError
-    dt = DateSerial(yr, monthNum, dayNum)
-    On Error GoTo 0
-
-    Debug.Print "Constructed Date: " & Format(dt, "yyyy-mm-dd")
-    Debug.Print "===================================="
+    dt = CDate(dateStr)
 
     Dim wc As String
     wc = wardCodes(cmbWard.ListIndex)
@@ -2692,16 +2680,9 @@ Private Sub btnSave_Click()
     txtAge.SetFocus
     Exit Sub
 
-DateError:
-    MsgBox "Error constructing date from selected month and day." & vbCrLf & _
-           "Month: " & monthName & " (" & monthNum & ")" & vbCrLf & _
-           "Day: " & dayNum & vbCrLf & _
-           "Year: " & yr & vbCrLf & vbCrLf & _
-           "Error: " & Err.Description, vbCritical, "Date Error"
-    Exit Sub
 End Sub
 
-Private Sub UpdateAgesRow(rowIndex As Long, admDate As Date, wardCode As String, _
+Private Sub UpdateAgesRow(rowIndex As Long, admDate As Variant, wardCode As String, _
     patientID As String, age As Long, ageUnit As String, sex As String, nhis As String)
     ' Update existing row instead of creating new one
     On Error GoTo UpdateError
@@ -2719,9 +2700,13 @@ Private Sub UpdateAgesRow(rowIndex As Long, admDate As Date, wardCode As String,
 
     With targetRow.Range
         ' Update all fields (keep existing ID, update other fields)
-        .Cells(1, COL_ADM_DATE).Value = admDate
-        .Cells(1, COL_ADM_DATE).NumberFormat = "yyyy-mm-dd"
-        .Cells(1, COL_ADM_MONTH).Value = Month(admDate)
+        If IsDate(admDate) Then
+            .Cells(1, COL_ADM_DATE).Value = CDate(admDate)
+            .Cells(1, COL_ADM_MONTH).Value = Month(CDate(admDate))
+        Else
+            .Cells(1, COL_ADM_DATE).Value = admDate
+            .Cells(1, COL_ADM_MONTH).Value = 0
+        End If
         .Cells(1, COL_ADM_WARD_CODE).Value = wardCode
         .Cells(1, COL_ADM_PATIENT_ID).Value = patientID
         .Cells(1, COL_ADM_PATIENT_NAME).Value = "Age Entry"  ' Ages entry uses this for patient name
@@ -2745,17 +2730,7 @@ Private Sub btnClose_Click()
     Unload Me
 End Sub
 
-Private Sub spnDay_Change()
-    txtDay.Value = CStr(spnDay.Value)
-End Sub
-
-Private Sub txtDay_Change()
-    If IsNumeric(txtDay.Value) Then
-        Dim v As Long
-        v = Val(txtDay.Value)
-        If v >= 1 And v <= 31 Then spnDay.Value = v
-    End If
-End Sub
+' Spinner and text change events removed as controls are deleted
 '''
 
 VBA_FRM_DEATH_CODE = '''
@@ -2804,11 +2779,11 @@ Private Sub UpdateRecentList()
 
     Dim i As Long
     For i = startRow To tbl.ListRows.Count
-        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
-           tbl.ListRows(i).Range(1, 1).Value <> "" Then
-            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
+           tbl.ListRows(i).Range(1, 2).Value <> "" Then
+            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 2).Value, "dd/mm/yyyy") & " | " & _
                 tbl.ListRows(i).Range(1, 6).Value & " | " & _
-                tbl.ListRows(i).Range(1, 3).Value & " | " & _
+                tbl.ListRows(i).Range(1, 5).Value & " | " & _
                 tbl.ListRows(i).Range(1, 4).Value
         End If
     Next i
@@ -2834,11 +2809,11 @@ Private Sub lstRecent_Click()
     editingRowIndex = actualRow
 
     ' Load the selected entry
-    txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 1).Value, "dd/mm/yyyy")
+    txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 2).Value, "dd/mm/yyyy")
 
     ' Load ward
     Dim wc As String
-    wc = tbl.ListRows(actualRow).Range(1, 6).Value
+    wc = tbl.ListRows(actualRow).Range(1, 4).Value
     Dim j As Long
     For j = 0 To UBound(wardCodes)
         If wardCodes(j) = wc Then
@@ -2848,8 +2823,8 @@ Private Sub lstRecent_Click()
     Next j
 
     ' Load patient details
-    txtFolderNum.Value = tbl.ListRows(actualRow).Range(1, 2).Value
-    txtName.Value = tbl.ListRows(actualRow).Range(1, 3).Value
+    txtFolderNum.Value = tbl.ListRows(actualRow).Range(1, 5).Value
+    txtName.Value = tbl.ListRows(actualRow).Range(1, 6).Value
     txtAge.Value = CStr(tbl.ListRows(actualRow).Range(1, 7).Value)
     cmbAgeUnit.Value = tbl.ListRows(actualRow).Range(1, 8).Value
 
@@ -2868,10 +2843,10 @@ Private Sub lstRecent_Click()
     End If
 
     ' Load within 24 hours flag
-    chkWithin24.Value = (tbl.ListRows(actualRow).Range(1, 5).Value = "Yes")
+    chkWithin24.Value = (tbl.ListRows(actualRow).Range(1, 11).Value = True)
 
     ' Load cause
-    cmbCause.Value = tbl.ListRows(actualRow).Range(1, 11).Value
+    cmbCause.Value = tbl.ListRows(actualRow).Range(1, 10).Value
 
     lblStatus.Caption = "Loaded entry for editing"
 End Sub
@@ -2928,12 +2903,16 @@ Private Function SaveDeathEntry() As Boolean
         Exit Function
     End If
 
-    Dim deathDate As Date
-    deathDate = ParseDateDth(txtDate.Value)
-    If deathDate = #1/1/1900# Then
-        MsgBox "Please enter a valid date (dd/mm/yyyy).", vbExclamation
+    Dim deathDate As Variant
+    deathDate = Trim(txtDate.Value)
+    
+    If Not IsDate(deathDate) Then
+        MsgBox "Please enter a valid date (e.g., 14/02/2026).", vbExclamation
+        txtDate.SetFocus
         Exit Function
     End If
+    
+    deathDate = CDate(deathDate)
 
     If Trim(txtAge.Value) = "" Or Not IsNumeric(txtAge.Value) Then
         MsgBox "Please enter a valid age.", vbExclamation
@@ -2970,7 +2949,7 @@ Private Function SaveDeathEntry() As Boolean
     SaveDeathEntry = True
 End Function
 
-Private Sub UpdateDeathRow(rowIndex As Long, deathDate As Date, wardCode As String, _
+Private Sub UpdateDeathRow(rowIndex As Long, deathDate As Variant, wardCode As String, _
     folderNum As String, deceasedName As String, _
     age As Long, ageUnit As String, sex As String, nhis As String, _
     causeOfDeath As String, within24 As Boolean)
@@ -2990,9 +2969,13 @@ Private Sub UpdateDeathRow(rowIndex As Long, deathDate As Date, wardCode As Stri
 
     With targetRow.Range
         ' Update all fields (keep existing ID, update other fields)
-        .Cells(1, COL_DEATH_DATE).Value = deathDate
-        .Cells(1, COL_DEATH_DATE).NumberFormat = "yyyy-mm-dd"
-        .Cells(1, COL_DEATH_MONTH).Value = Month(deathDate)
+        If IsDate(deathDate) Then
+            .Cells(1, COL_DEATH_DATE).Value = CDate(deathDate)
+            .Cells(1, COL_DEATH_MONTH).Value = Month(CDate(deathDate))
+        Else
+            .Cells(1, COL_DEATH_DATE).Value = deathDate
+            .Cells(1, COL_DEATH_MONTH).Value = 0
+        End If
         .Cells(1, COL_DEATH_WARD_CODE).Value = wardCode
         .Cells(1, COL_DEATH_FOLDER_NUM).Value = folderNum
         .Cells(1, COL_DEATH_NAME).Value = deceasedName
@@ -3326,11 +3309,7 @@ def create_ages_entry_form(vbproj):
 
     # Date
     _add_label(d, "lblDate", "Date:", 12, y, 60, 18)
-    _add_combobox(d, "cmbMonth", 80, y, 100, 22)
-    _add_textbox(d, "txtDay", 190, y, 30, 20)
-    spn = _add_spinner(d, "spnDay", 220, y, 15, 20)
-    spn.Min = 1
-    spn.Max = 31
+    _add_textbox(d, "txtDate", 80, y, 120, 20)
     y += 32
 
     # Divider
