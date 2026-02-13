@@ -5,18 +5,25 @@ Creates UserForms, standard modules, navigation buttons, and saves as .xlsm
 import os
 import time
 import json
-from config import WorkbookConfig
+from .config import WorkbookConfig
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # VBA SOURCE CODE - STANDARD MODULES
 # ═══════════════════════════════════════════════════════════════════════════════
 
 VBA_MOD_CONFIG = '''
+'###################################################################
+'# MODULE: modConfig
+'# PURPOSE: Hospital and ward configuration management
+'###################################################################
+
 Option Explicit
 
 Public Const HOSPITAL_NAME As String = "HOHOE MUNICIPAL HOSPITAL"
 
-' Dynamic ward configuration - reads from tblWardConfig table
+'===================================================================
+' WARD CONFIGURATION - reads from tblWardConfig table
+'===================================================================
 Public Function GetWardCount() As Long
     Dim tbl As ListObject
     Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
@@ -91,11 +98,145 @@ End Sub
 '''
 
 VBA_MOD_DATA_ACCESS = '''
+'###################################################################
+'# MODULE: modDataAccess
+'# PURPOSE: Core data operations (save, retrieve, calculate)
+'###################################################################
+
 Option Explicit
 
+'===================================================================
+' COLUMN INDEX CONSTANTS
+'===================================================================
+
+' tblDaily columns
+Public Const COL_DAILY_ENTRY_DATE As Integer = 1
+Public Const COL_DAILY_MONTH As Integer = 2
+Public Const COL_DAILY_WARD_CODE As Integer = 3
+Public Const COL_DAILY_ADMISSIONS As Integer = 4
+Public Const COL_DAILY_DISCHARGES As Integer = 5
+Public Const COL_DAILY_DEATHS As Integer = 6
+Public Const COL_DAILY_DEATHS_U24 As Integer = 7
+Public Const COL_DAILY_TRANSFERS_IN As Integer = 8
+Public Const COL_DAILY_TRANSFERS_OUT As Integer = 9
+Public Const COL_DAILY_PREV_REMAINING As Integer = 10
+Public Const COL_DAILY_REMAINING As Integer = 11
+Public Const COL_DAILY_TIMESTAMP As Integer = 12
+
+' tblAdmissions columns
+Public Const COL_ADM_ID As Integer = 1
+Public Const COL_ADM_DATE As Integer = 2
+Public Const COL_ADM_MONTH As Integer = 3
+Public Const COL_ADM_WARD_CODE As Integer = 4
+Public Const COL_ADM_PATIENT_ID As Integer = 5
+Public Const COL_ADM_PATIENT_NAME As Integer = 6
+Public Const COL_ADM_AGE As Integer = 7
+Public Const COL_ADM_AGE_UNIT As Integer = 8
+Public Const COL_ADM_SEX As Integer = 9
+Public Const COL_ADM_NHIS As Integer = 10
+Public Const COL_ADM_TIMESTAMP As Integer = 11
+
+' tblDeaths columns
+Public Const COL_DEATH_ID As Integer = 1
+Public Const COL_DEATH_DATE As Integer = 2
+Public Const COL_DEATH_MONTH As Integer = 3
+Public Const COL_DEATH_WARD_CODE As Integer = 4
+Public Const COL_DEATH_FOLDER_NUM As Integer = 5
+Public Const COL_DEATH_NAME As Integer = 6
+Public Const COL_DEATH_AGE As Integer = 7
+Public Const COL_DEATH_SEX As Integer = 8
+Public Const COL_DEATH_NHIS As Integer = 9
+Public Const COL_DEATH_CAUSE As Integer = 10
+Public Const COL_DEATH_WITHIN_24HR As Integer = 11
+Public Const COL_DEATH_AGE_UNIT As Integer = 12
+Public Const COL_DEATH_TIMESTAMP As Integer = 13
+
+'===================================================================
+' REMAINING CALCULATION SYSTEM
+'===================================================================
+' The "Remaining" patient count is calculated as:
+'   Remaining = PrevRemaining + Admissions - Discharges - Deaths - TransfersOut + TransfersIn
+'
+' CALCULATION FLOW:
+' 1. SaveDailyEntry() writes data to tblDaily
+' 2. CalculateRemainingForRow() calculates PrevRemaining and Remaining as VALUES (not formulas)
+' 3. RecalculateSubsequentRows() cascades changes forward if middle rows are edited
+'
+' KEY FUNCTIONS:
+' - GetLastRemainingForWard(wardCode, date): Finds previous remaining for context
+' - CalculateRemainingForRow(rowIndex): Calculates one row's values
+' - RecalculateAllRows(): Manual recalculation trigger (diagnostic)
+'
+' See CLAUDE.md "Remaining Calculation System" for full details.
+'===================================================================
+
+'===================================================================
+' HELPER FUNCTIONS
+'===================================================================
+
+Private Function GetOrAddTableRow(tbl As ListObject) As ListRow
+    ' Returns the first row if it's empty (seed row), otherwise adds a new row
+    ' This avoids creating unnecessary empty rows in Excel tables
+
+    If tbl.ListRows.Count = 1 Then
+        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or _
+           tbl.ListRows(1).Range(1, 1).Value = "" Then
+            Set GetOrAddTableRow = tbl.ListRows(1)
+            Exit Function
+        End If
+    End If
+
+    Set GetOrAddTableRow = tbl.ListRows.Add
+End Function
+
+Private Function GenerateNextID(tbl As ListObject, prefix As String) As String
+    ' Generates sequential IDs in format: [prefix]YYYY-#####
+    ' prefix: Optional prefix (e.g., "D" for deaths, "" for admissions)
+    ' Returns: Next available ID string
+
+    Dim yr As Long
+    yr = GetReportYear()
+
+    ' Check if table is empty or has only seed row
+    If tbl.ListRows.Count = 1 Then
+        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or _
+           tbl.ListRows(1).Range(1, 1).Value = "" Then
+            GenerateNextID = prefix & yr & "-00001"
+            Exit Function
+        End If
+    End If
+
+    ' Parse last ID and increment
+    Dim lastID As String, dashPos As Long, num As Long
+    lastID = CStr(tbl.ListRows(tbl.ListRows.Count).Range(1, 1).Value)
+    dashPos = InStr(lastID, "-")
+
+    If dashPos > 0 Then
+        num = CLng(Mid(lastID, dashPos + 1)) + 1
+    Else
+        num = 1
+    End If
+
+    GenerateNextID = prefix & yr & "-" & Format(num, "00000")
+End Function
+
+'===================================================================
+' CALCULATION OPERATIONS
+'===================================================================
+
 Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) As Long
-    ' FIXED: Scans backward through ALL rows without premature exits
-    ' Tracks the most recent matching entry for accurate calculation
+    '===================================================================
+    ' CRITICAL: This function searches BACKWARD through all rows to find
+    ' the most recent "Remaining" value for a ward before a given date.
+    '
+    ' BUG FIX (2026-02): Removed early exit condition in backward loop.
+    ' Previously, the loop would exit as soon as it found ANY ward match,
+    ' even if the date didn't match. This caused incorrect remaining values
+    ' (e.g., Day 3 showing 25 instead of 23).
+    '
+    ' CORRECT BEHAVIOR: Must scan ALL rows backward until finding exact
+    ' ward + date match, then return that row's Remaining value.
+    '===================================================================
 
     Dim ws As Worksheet
     Set ws = ThisWorkbook.Sheets("DailyData")
@@ -104,7 +245,7 @@ Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) 
 
     ' Check for empty table
     If tbl.ListRows.Count <= 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Then
+        If IsEmpty(tbl.ListRows(1).Range(1, COL_DAILY_ENTRY_DATE).Value) Then
             GetLastRemainingForWard = GetPrevYearRemaining(wardCode)
             Exit Function
         End If
@@ -123,8 +264,8 @@ Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) 
         Dim rowWard As String
         Dim rowDate As Variant
 
-        rowWard = tbl.ListRows(i).Range(1, 3).Value
-        rowDate = tbl.ListRows(i).Range(1, 1).Value
+        rowWard = tbl.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value
+        rowDate = tbl.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
 
         If rowWard = wardCode And IsDate(rowDate) Then
             Dim currentDate As Date
@@ -133,7 +274,7 @@ Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) 
                 ' Found a matching prior entry - keep track of most recent
                 If currentDate > foundDate Then
                     foundDate = currentDate
-                    foundRemaining = CLng(tbl.ListRows(i).Range(1, 11).Value)
+                    foundRemaining = CLng(tbl.ListRows(i).Range(1, COL_DAILY_REMAINING).Value)
                     hasMatch = True
                 End If
             End If
@@ -190,10 +331,10 @@ Public Function CheckDuplicateDaily(entryDate As Date, wardCode As String) As Lo
     Dim i As Long
     For i = 1 To tbl.ListRows.Count
         Dim rowDate As Variant
-        rowDate = tbl.ListRows(i).Range(1, 1).Value
+        rowDate = tbl.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
         If IsDate(rowDate) Then
             If CDate(rowDate) = entryDate And _
-               tbl.ListRows(i).Range(1, 3).Value = wardCode Then
+               tbl.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value = wardCode Then
                 CheckDuplicateDaily = i
                 Exit Function
             End If
@@ -209,11 +350,11 @@ Public Sub CalculateRemainingForRow(targetRow As ListRow)
 
     ' Get values from the row
     Dim entryDate As Variant
-    entryDate = targetRow.Range.Cells(1, 1).Value
+    entryDate = targetRow.Range.Cells(1, COL_DAILY_ENTRY_DATE).Value
     If Not IsDate(entryDate) Then Exit Sub
 
     Dim wardCode As String
-    wardCode = CStr(targetRow.Range.Cells(1, 3).Value)
+    wardCode = CStr(targetRow.Range.Cells(1, COL_DAILY_WARD_CODE).Value)
     If wardCode = "" Then Exit Sub
 
     ' Get previous remaining (looks backward in time)
@@ -224,12 +365,12 @@ Public Sub CalculateRemainingForRow(targetRow As ListRow)
     Dim admissions As Long, discharges As Long, deaths As Long
     Dim deathsU24 As Long, transIn As Long, transOut As Long
 
-    admissions = CLng(Val(targetRow.Range.Cells(1, 4).Value))
-    discharges = CLng(Val(targetRow.Range.Cells(1, 5).Value))
-    deaths = CLng(Val(targetRow.Range.Cells(1, 6).Value))
-    deathsU24 = CLng(Val(targetRow.Range.Cells(1, 7).Value))
-    transIn = CLng(Val(targetRow.Range.Cells(1, 8).Value))
-    transOut = CLng(Val(targetRow.Range.Cells(1, 9).Value))
+    admissions = CLng(Val(targetRow.Range.Cells(1, COL_DAILY_ADMISSIONS).Value))
+    discharges = CLng(Val(targetRow.Range.Cells(1, COL_DAILY_DISCHARGES).Value))
+    deaths = CLng(Val(targetRow.Range.Cells(1, COL_DAILY_DEATHS).Value))
+    deathsU24 = CLng(Val(targetRow.Range.Cells(1, COL_DAILY_DEATHS_U24).Value))
+    transIn = CLng(Val(targetRow.Range.Cells(1, COL_DAILY_TRANSFERS_IN).Value))
+    transOut = CLng(Val(targetRow.Range.Cells(1, COL_DAILY_TRANSFERS_OUT).Value))
 
     ' Calculate remaining
     ' Formula: Remaining = PrevRemaining + Admissions + TransfersIn - Discharges - Deaths - TransfersOut - DeathsUnder24Hrs
@@ -237,8 +378,8 @@ Public Sub CalculateRemainingForRow(targetRow As ListRow)
     remaining = prevRemaining + admissions + transIn - discharges - deaths - transOut - deathsU24
 
     ' Update the calculated columns
-    targetRow.Range.Cells(1, 10).Value = prevRemaining
-    targetRow.Range.Cells(1, 11).Value = remaining
+    targetRow.Range.Cells(1, COL_DAILY_PREV_REMAINING).Value = prevRemaining
+    targetRow.Range.Cells(1, COL_DAILY_REMAINING).Value = remaining
 End Sub
 
 Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
@@ -259,7 +400,7 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
     Dim useSeedRow As Boolean
     useSeedRow = False
     If tbl.ListRows.Count = 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Then
+        If IsEmpty(tbl.ListRows(1).Range(1, COL_DAILY_ENTRY_DATE).Value) Then
             useSeedRow = True
         End If
     End If
@@ -278,18 +419,23 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
 
     ' Write input values
     With targetRow.Range
-        .Cells(1, 1).Value = entryDate
-        .Cells(1, 1).NumberFormat = "yyyy-mm-dd"
-        .Cells(1, 2).Value = Month(entryDate)
-        .Cells(1, 3).Value = wardCode
-        .Cells(1, 4).Value = admissions
-        .Cells(1, 5).Value = discharges
-        .Cells(1, 6).Value = deaths
-        .Cells(1, 7).Value = deathsU24
-        .Cells(1, 8).Value = transIn
-        .Cells(1, 9).Value = transOut
-        .Cells(1, 12).Value = Now
-        .Cells(1, 12).NumberFormat = "yyyy-mm-dd hh:mm"
+        .Cells(1, COL_DAILY_ENTRY_DATE).Value = entryDate
+
+        ' IMPORTANT: Date columns must be formatted explicitly
+        ' Excel may store dates as text if format isn't set
+        ' See initialize_date_formats() in phase2_vba.py for column setup
+        .Cells(1, COL_DAILY_ENTRY_DATE).NumberFormat = "yyyy-mm-dd"
+
+        .Cells(1, COL_DAILY_MONTH).Value = Month(entryDate)
+        .Cells(1, COL_DAILY_WARD_CODE).Value = wardCode
+        .Cells(1, COL_DAILY_ADMISSIONS).Value = admissions
+        .Cells(1, COL_DAILY_DISCHARGES).Value = discharges
+        .Cells(1, COL_DAILY_DEATHS).Value = deaths
+        .Cells(1, COL_DAILY_DEATHS_U24).Value = deathsU24
+        .Cells(1, COL_DAILY_TRANSFERS_IN).Value = transIn
+        .Cells(1, COL_DAILY_TRANSFERS_OUT).Value = transOut
+        .Cells(1, COL_DAILY_TIMESTAMP).Value = Now
+        .Cells(1, COL_DAILY_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
 
     ' Calculate using unified function
@@ -301,8 +447,8 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
     ' Find row index after sort (may have moved)
     Dim newRowIndex As Long
     For newRowIndex = 1 To tbl.ListRows.Count
-        If tbl.ListRows(newRowIndex).Range(1, 1).Value = entryDate And _
-           tbl.ListRows(newRowIndex).Range(1, 3).Value = wardCode Then
+        If tbl.ListRows(newRowIndex).Range(1, COL_DAILY_ENTRY_DATE).Value = entryDate And _
+           tbl.ListRows(newRowIndex).Range(1, COL_DAILY_WARD_CODE).Value = wardCode Then
             Exit For
         End If
     Next newRowIndex
@@ -802,6 +948,10 @@ ErrorHandler:
            "Import cancelled.", vbExclamation, "Import Error"
 End Sub
 
+'===================================================================
+' DATA SAVE OPERATIONS
+'===================================================================
+
 Public Sub SaveAdmission(admDate As Date, wardCode As String, _
     patientID As String, patientName As String, _
     age As Long, ageUnit As String, sex As String, nhis As String)
@@ -811,68 +961,35 @@ Public Sub SaveAdmission(admDate As Date, wardCode As String, _
     Dim tbl As ListObject
     Set tbl = ws.ListObjects("tblAdmissions")
 
-    ' Check seed row
-    Dim useSeedRow As Boolean
-    useSeedRow = False
-    If tbl.ListRows.Count = 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
-            useSeedRow = True
-        End If
-    End If
-
+    ' Get row to use (seed row if empty, otherwise new row)
     Dim targetRow As ListRow
-    If useSeedRow Then
-        Set targetRow = tbl.ListRows(1)
-    Else
-        Set targetRow = tbl.ListRows.Add
-    End If
+    Set targetRow = GetOrAddTableRow(tbl)
 
     ' Generate ID
     Dim newID As String
-    newID = GenerateAdmissionID()
+    newID = GenerateNextID(tbl, "")
 
     With targetRow.Range
-        .Cells(1, 1).Value = newID
-        .Cells(1, 2).Value = admDate
-        .Cells(1, 2).NumberFormat = "yyyy-mm-dd"
-        .Cells(1, 3).Value = Month(admDate)
-        .Cells(1, 4).Value = wardCode
-        .Cells(1, 5).Value = patientID
-        .Cells(1, 6).Value = patientName
-        .Cells(1, 7).Value = age
-        .Cells(1, 8).Value = ageUnit
-        .Cells(1, 9).Value = sex
-        .Cells(1, 10).Value = nhis
-        .Cells(1, 11).Value = Now
-        .Cells(1, 11).NumberFormat = "yyyy-mm-dd hh:mm"
+        .Cells(1, COL_ADM_ID).Value = newID
+        .Cells(1, COL_ADM_DATE).Value = admDate
+
+        ' IMPORTANT: Date columns must be formatted explicitly
+        ' Excel may store dates as text if format isn't set
+        ' See initialize_date_formats() in phase2_vba.py for column setup
+        .Cells(1, COL_ADM_DATE).NumberFormat = "yyyy-mm-dd"
+
+        .Cells(1, COL_ADM_MONTH).Value = Month(admDate)
+        .Cells(1, COL_ADM_WARD_CODE).Value = wardCode
+        .Cells(1, COL_ADM_PATIENT_ID).Value = patientID
+        .Cells(1, COL_ADM_PATIENT_NAME).Value = patientName
+        .Cells(1, COL_ADM_AGE).Value = age
+        .Cells(1, COL_ADM_AGE_UNIT).Value = ageUnit
+        .Cells(1, COL_ADM_SEX).Value = sex
+        .Cells(1, COL_ADM_NHIS).Value = nhis
+        .Cells(1, COL_ADM_TIMESTAMP).Value = Now
+        .Cells(1, COL_ADM_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
 End Sub
-
-Private Function GenerateAdmissionID() As String
-    Dim tbl As ListObject
-    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
-    Dim yr As Long
-    yr = GetReportYear()
-
-    If tbl.ListRows.Count <= 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
-            GenerateAdmissionID = yr & "-00001"
-            Exit Function
-        End If
-    End If
-
-    Dim lastID As String
-    lastID = CStr(tbl.ListRows(tbl.ListRows.Count).Range(1, 1).Value)
-    Dim dashPos As Long
-    dashPos = InStr(lastID, "-")
-    If dashPos > 0 Then
-        Dim num As Long
-        num = CLng(Mid(lastID, dashPos + 1)) + 1
-        GenerateAdmissionID = yr & "-" & Format(num, "00000")
-    Else
-        GenerateAdmissionID = yr & "-00001"
-    End If
-End Function
 
 Public Sub SaveDeath(deathDate As Date, wardCode As String, _
     folderNum As String, deceasedName As String, _
@@ -884,73 +1001,50 @@ Public Sub SaveDeath(deathDate As Date, wardCode As String, _
     Dim tbl As ListObject
     Set tbl = ws.ListObjects("tblDeaths")
 
-    Dim useSeedRow As Boolean
-    useSeedRow = False
-    If tbl.ListRows.Count = 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
-            useSeedRow = True
-        End If
-    End If
-
+    ' Get row to use (seed row if empty, otherwise new row)
     Dim targetRow As ListRow
-    If useSeedRow Then
-        Set targetRow = tbl.ListRows(1)
-    Else
-        Set targetRow = tbl.ListRows.Add
-    End If
+    Set targetRow = GetOrAddTableRow(tbl)
 
     ' Generate ID
     Dim newID As String
-    newID = GenerateDeathID()
+    newID = GenerateNextID(tbl, "D")
 
     With targetRow.Range
-        .Cells(1, 1).Value = newID
-        .Cells(1, 2).Value = deathDate
-        .Cells(1, 2).NumberFormat = "yyyy-mm-dd"
-        .Cells(1, 3).Value = Month(deathDate)
-        .Cells(1, 4).Value = wardCode
-        .Cells(1, 5).Value = folderNum
-        .Cells(1, 6).Value = deceasedName
-        .Cells(1, 7).Value = age
-        .Cells(1, 8).Value = ageUnit
-        .Cells(1, 9).Value = sex
-        .Cells(1, 10).Value = nhis
-        .Cells(1, 11).Value = causeOfDeath
-        .Cells(1, 12).Value = within24
-        .Cells(1, 13).Value = Now
-        .Cells(1, 13).NumberFormat = "yyyy-mm-dd hh:mm"
+        .Cells(1, COL_DEATH_ID).Value = newID
+        .Cells(1, COL_DEATH_DATE).Value = deathDate
+
+        ' IMPORTANT: Date columns must be formatted explicitly
+        ' Excel may store dates as text if format isn't set
+        ' See initialize_date_formats() in phase2_vba.py for column setup
+        .Cells(1, COL_DEATH_DATE).NumberFormat = "yyyy-mm-dd"
+
+        .Cells(1, COL_DEATH_MONTH).Value = Month(deathDate)
+        .Cells(1, COL_DEATH_WARD_CODE).Value = wardCode
+        .Cells(1, COL_DEATH_FOLDER_NUM).Value = folderNum
+        .Cells(1, COL_DEATH_NAME).Value = deceasedName
+        .Cells(1, COL_DEATH_AGE).Value = age
+        .Cells(1, COL_DEATH_AGE_UNIT).Value = ageUnit
+        .Cells(1, COL_DEATH_SEX).Value = sex
+        .Cells(1, COL_DEATH_NHIS).Value = nhis
+        .Cells(1, COL_DEATH_CAUSE).Value = causeOfDeath
+        .Cells(1, COL_DEATH_WITHIN_24HR).Value = within24
+        .Cells(1, COL_DEATH_TIMESTAMP).Value = Now
+        .Cells(1, COL_DEATH_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
 End Sub
-
-Private Function GenerateDeathID() As String
-    Dim tbl As ListObject
-    Set tbl = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
-    Dim yr As Long
-    yr = GetReportYear()
-
-    If tbl.ListRows.Count <= 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
-            GenerateDeathID = "D" & yr & "-00001"
-            Exit Function
-        End If
-    End If
-
-    Dim lastID As String
-    lastID = CStr(tbl.ListRows(tbl.ListRows.Count).Range(1, 1).Value)
-    Dim dashPos As Long
-    dashPos = InStr(lastID, "-")
-    If dashPos > 0 Then
-        Dim num As Long
-        num = CLng(Mid(lastID, dashPos + 1)) + 1
-        GenerateDeathID = "D" & yr & "-" & Format(num, "00000")
-    Else
-        GenerateDeathID = "D" & yr & "-00001"
-    End If
-End Function
 '''
 
 VBA_MOD_REPORTS = '''
+'###################################################################
+'# MODULE: modReports
+'# PURPOSE: Generate and refresh statistical reports
+'###################################################################
+
 Option Explicit
+
+'===================================================================
+' REPORT GENERATION FUNCTIONS
+'===================================================================
 
 Public Sub RefreshDeathsReport()
     Application.ScreenUpdating = False
@@ -1167,7 +1261,16 @@ End Sub
 '''
 
 VBA_MOD_NAVIGATION = '''
+'###################################################################
+'# MODULE: modNavigation
+'# PURPOSE: Button event handlers for form navigation
+'###################################################################
+
 Option Explicit
+
+'===================================================================
+' FORM NAVIGATION HANDLERS
+'===================================================================
 
 Public Sub ShowDailyEntry()
     frmDailyEntry.Show
@@ -1199,7 +1302,16 @@ End Sub
 '''
 
 VBA_MOD_YEAREND = '''
+'###################################################################
+'# MODULE: modYearEnd
+'# PURPOSE: Year-end operations, exports, and workbook rebuild
+'###################################################################
+
 Option Explicit
+
+'===================================================================
+' YEAR-END EXPORT FUNCTIONS
+'===================================================================
 
 Public Sub ExportCarryForward()
     Dim ws As Worksheet
@@ -1251,17 +1363,11 @@ Public Sub ExportCarryForward()
     jsonStr = jsonStr & "  }" & vbCrLf
     jsonStr = jsonStr & "}"
 
-    ' Save to file
+    ' Save to file using helper function
     Dim filePath As String
-    filePath = ThisWorkbook.Path & "\\carry_forward_" & yr & ".json"
+    filePath = ThisWorkbook.Path & "\\config\\carry_forward_" & yr & ".json"
 
-    Dim fNum As Integer
-    fNum = FreeFile
-    Open filePath For Output As #fNum
-    Print #fNum, jsonStr
-    Close #fNum
-
-    MsgBox "Carry-forward data exported to:" & vbCrLf & filePath, vbInformation, "Year-End Export"
+    Call WriteJSONFile(filePath, jsonStr, "Carry-forward data exported to:")
 End Sub
 
 ' Export current ward configuration to wards_config.json
@@ -1301,7 +1407,7 @@ Public Sub ExportWardsConfig()
 
     ' Save to wards_config.json
     Dim filePath As String
-    filePath = ThisWorkbook.Path & "\\wards_config.json"
+    filePath = ThisWorkbook.Path & "\\config\\wards_config.json"
 
     Dim fNum As Integer
     fNum = FreeFile
@@ -1359,7 +1465,7 @@ Public Sub ExportPreferencesConfig()
 
     ' Save to hospital_preferences.json
     Dim filePath As String
-    filePath = ThisWorkbook.Path & "\\hospital_preferences.json"
+    filePath = ThisWorkbook.Path & "\\config\\hospital_preferences.json"
 
     On Error GoTo ErrorHandler
     Dim fNum As Integer
@@ -1380,8 +1486,41 @@ ErrorHandler:
     MsgBox "Error exporting preferences: " & Err.Description, vbCritical, "Export Error"
 End Sub
 
+'===================================================================
+' JSON HELPER FUNCTIONS
+'===================================================================
+
+Private Function WriteJSONFile(filePath As String, jsonContent As String, successMsg As String) As Boolean
+    ' Centralized JSON file writing with error handling
+    ' Returns True if successful, False otherwise
+    On Error GoTo WriteError
+
+    Dim fNum As Integer
+    fNum = FreeFile
+    Open filePath For Output As #fNum
+    Print #fNum, jsonContent
+    Close #fNum
+
+    If successMsg <> "" Then
+        MsgBox successMsg & vbCrLf & filePath, vbInformation, "Export Successful"
+    End If
+
+    WriteJSONFile = True
+    Exit Function
+
+WriteError:
+    WriteJSONFile = False
+    MsgBox "Error writing JSON file: " & filePath & vbCrLf & Err.Description, vbCritical, "Export Error"
+End Function
+
+'===================================================================
+' WORKBOOK REBUILD FUNCTIONS
+'===================================================================
+' Automated rebuild process with data preservation and validation
+
 Private Function CheckRebuildPrerequisites() As String
     ' Returns empty string if all checks pass, otherwise returns error message
+    ' Validates: Python installation, build scripts, config files
     Dim fso As Object
     Set fso = CreateObject("Scripting.FileSystemObject")
 
@@ -1427,9 +1566,9 @@ Private Function CheckRebuildPrerequisites() As String
 
     ' Check if config files exist
     Dim wardsConfig As String
-    wardsConfig = ThisWorkbook.Path & "\\wards_config.json"
+    wardsConfig = ThisWorkbook.Path & "\\config\\wards_config.json"
     If Not fso.FileExists(wardsConfig) Then
-        CheckRebuildPrerequisites = "ERROR: wards_config.json not found." & vbCrLf & _
+        CheckRebuildPrerequisites = "ERROR: config\\wards_config.json not found." & vbCrLf & _
                                     "Please export ward configuration first."
         Exit Function
     End If
@@ -1656,10 +1795,11 @@ Private Sub lstRecent_Click()
     If actualRow > tbl.ListRows.Count Then Exit Sub
 
     isLoading = True ' Prevent change events while loading
+    On Error GoTo DateError
 
     ' Load the selected entry
     Dim entryDate As Date
-    entryDate = tbl.ListRows(actualRow).Range(1, 1).Value
+    entryDate = CDate(tbl.ListRows(actualRow).Range(1, 1).Value)
 
     cmbMonth.ListIndex = Month(entryDate) - 1
     spnDay.Value = Day(entryDate)
@@ -1690,6 +1830,12 @@ Private Sub lstRecent_Click()
     lblStatus.Caption = "Loaded entry for editing"
     lblStatus.ForeColor = &H0080FF ' Orange
     isDirty = False
+    Exit Sub
+
+DateError:
+    isLoading = False
+    MsgBox "Error loading entry: Invalid date format. Please contact support.", vbCritical, "Date Error"
+    Exit Sub
 End Sub
 
 Private Sub cmbWard_Change()
@@ -2012,8 +2158,10 @@ Option Explicit
 
 Private wardCodes As Variant
 Private wardNames As Variant
+Private editingRowIndex As Long  ' 0 = new entry, >0 = editing specific row
 
 Private Sub UserForm_Initialize()
+    editingRowIndex = 0  ' Start in new entry mode
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
 
@@ -2075,6 +2223,9 @@ Private Sub lstRecent_Click()
     actualRow = startRow + lstRecent.ListIndex
 
     If actualRow > tbl.ListRows.Count Then Exit Sub
+
+    ' Store the row we're editing
+    editingRowIndex = actualRow
 
     ' Load the selected entry
     txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 1).Value, "dd/mm/yyyy")
@@ -2144,6 +2295,7 @@ Private Sub btnSaveClose_Click()
 End Sub
 
 Private Sub btnCancel_Click()
+    editingRowIndex = 0  ' Clear edit mode
     Unload Me
 End Sub
 
@@ -2176,27 +2328,89 @@ Private Function SaveAdmissionEntry() As Boolean
     Dim wc As String
     wc = wardCodes(cmbWard.ListIndex)
 
-    SaveAdmission admDate, wc, Trim(txtPatientID.Value), _
-        Trim(txtPatientName.Value), CLng(txtAge.Value), _
-        cmbAgeUnit.Value, sex, nhis
+    ' Check if we're editing or creating new
+    If editingRowIndex > 0 Then
+        ' Edit mode: Update existing row
+        UpdateAdmissionRow editingRowIndex, admDate, wc, Trim(txtPatientID.Value), _
+            Trim(txtPatientName.Value), CLng(txtAge.Value), cmbAgeUnit.Value, sex, nhis
+        editingRowIndex = 0  ' Clear edit mode after save
+        lblStatus.Caption = "Updated: " & txtPatientName.Value
+    Else
+        ' New entry mode: Create new row
+        SaveAdmission admDate, wc, Trim(txtPatientID.Value), _
+            Trim(txtPatientName.Value), CLng(txtAge.Value), _
+            cmbAgeUnit.Value, sex, nhis
+        lblStatus.Caption = "Saved: " & txtPatientName.Value
+    End If
 
-    lblStatus.Caption = "Saved: " & txtPatientName.Value
     lblStatus.ForeColor = RGB(0, 128, 0)
-
     SaveAdmissionEntry = True
 End Function
 
+Private Sub UpdateAdmissionRow(rowIndex As Long, admDate As Date, wardCode As String, _
+    patientID As String, patientName As String, _
+    age As Long, ageUnit As String, sex As String, nhis As String)
+    ' Update existing row instead of creating new one
+    On Error GoTo UpdateError
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    If rowIndex < 1 Or rowIndex > tbl.ListRows.Count Then
+        MsgBox "Error: Invalid row index", vbCritical, "Update Error"
+        Exit Sub
+    End If
+
+    Dim targetRow As ListRow
+    Set targetRow = tbl.ListRows(rowIndex)
+
+    With targetRow.Range
+        ' Update all fields (keep existing ID, update other fields)
+        .Cells(1, COL_ADM_DATE).Value = admDate
+        .Cells(1, COL_ADM_DATE).NumberFormat = "yyyy-mm-dd"
+        .Cells(1, COL_ADM_MONTH).Value = Month(admDate)
+        .Cells(1, COL_ADM_WARD_CODE).Value = wardCode
+        .Cells(1, COL_ADM_PATIENT_ID).Value = patientID
+        .Cells(1, COL_ADM_PATIENT_NAME).Value = patientName
+        .Cells(1, COL_ADM_AGE).Value = age
+        .Cells(1, COL_ADM_AGE_UNIT).Value = ageUnit
+        .Cells(1, COL_ADM_SEX).Value = sex
+        .Cells(1, COL_ADM_NHIS).Value = nhis
+        .Cells(1, COL_ADM_TIMESTAMP).Value = Now
+        .Cells(1, COL_ADM_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
+    End With
+
+    UpdateRecentList
+    Exit Sub
+
+UpdateError:
+    MsgBox "Error updating entry: " & Err.Description, vbCritical, "Update Error"
+End Sub
+
 Private Function ParseDateAdm(dateStr As String) As Date
     On Error GoTo badDate
+
+    ' Validate input
+    If Trim(dateStr) = "" Then
+        MsgBox "Date field is empty. Please enter a valid date.", vbExclamation, "Invalid Date"
+        ParseDateAdm = #1/1/1900#
+        Exit Function
+    End If
+
     Dim parts() As String
     parts = Split(dateStr, "/")
     If UBound(parts) = 2 Then
         ParseDateAdm = DateSerial(CLng(parts(2)), CLng(parts(1)), CLng(parts(0)))
         Exit Function
     End If
+
     ParseDateAdm = CDate(dateStr)
     Exit Function
+
 badDate:
+    MsgBox "Invalid date format: " & dateStr & vbCrLf & _
+           "Please use dd/mm/yyyy format (e.g., 13/02/2026)", _
+           vbExclamation, "Invalid Date"
     ParseDateAdm = #1/1/1900#
 End Function
 '''
@@ -2206,8 +2420,10 @@ Option Explicit
 
 Private wardCodes As Variant
 Private wardNames As Variant
+Private editingRowIndex As Long  ' 0 = new entry, >0 = editing specific row
 
 Private Sub UserForm_Initialize()
+    editingRowIndex = 0  ' Start in new entry mode
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
 
@@ -2278,6 +2494,7 @@ End Sub
 
 Private Sub lstRecent_Click()
     If lstRecent.ListIndex < 0 Then Exit Sub
+    On Error GoTo DateError
 
     Dim tbl As ListObject
     Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
@@ -2292,9 +2509,31 @@ Private Sub lstRecent_Click()
 
     If actualRow > tbl.ListRows.Count Then Exit Sub
 
+    ' Store the row we're editing
+    editingRowIndex = actualRow
+
     ' Load the selected entry
     Dim entryDate As Date
-    entryDate = tbl.ListRows(actualRow).Range(1, 1).Value
+    Dim dateVal As Variant
+    dateVal = tbl.ListRows(actualRow).Range(1, 1).Value
+
+    ' Validate date value
+    If IsEmpty(dateVal) Or Not IsDate(dateVal) Then
+        MsgBox "Error: Invalid date in selected entry." & vbCrLf & _
+               "The date may be corrupted or stored as text." & vbCrLf & _
+               "Please rebuild the workbook or contact support.", vbCritical, "Date Error"
+        Exit Sub
+    End If
+
+    entryDate = CDate(dateVal)
+
+    ' Additional validation - ensure date is not default value
+    If entryDate < DateSerial(2020, 1, 1) Or entryDate > DateSerial(2030, 12, 31) Then
+        MsgBox "Error: Date out of valid range (2020-2030)." & vbCrLf & _
+               "Current value: " & Format(entryDate, "yyyy-mm-dd") & vbCrLf & _
+               "Please rebuild the workbook or contact support.", vbCritical, "Date Error"
+        Exit Sub
+    End If
 
     cmbMonth.ListIndex = Month(entryDate) - 1
     spnDay.Value = Day(entryDate)
@@ -2332,6 +2571,11 @@ Private Sub lstRecent_Click()
     lblStatus.Caption = "Loaded entry for editing"
     lblStatus.ForeColor = RGB(255, 128, 0) ' Orange
     txtAge.SetFocus
+    Exit Sub
+
+DateError:
+    MsgBox "Error loading entry: Invalid date format. Please contact support.", vbCritical, "Date Error"
+    Exit Sub
 End Sub
 
 Private Sub btnSave_Click()
@@ -2346,10 +2590,70 @@ Private Sub btnSave_Click()
         Exit Sub
     End If
 
+    ' Read month and day from TEXT values (not control state)
+    ' This prevents issues if controls lose state before save
+    Dim monthName As String
+    monthName = Trim(cmbMonth.Value)
+
+    Dim dayText As String
+    dayText = Trim(txtDay.Value)
+
+    ' Convert month name to month number
+    Dim monthNum As Long
+    Select Case UCase(monthName)
+        Case "JANUARY": monthNum = 1
+        Case "FEBRUARY": monthNum = 2
+        Case "MARCH": monthNum = 3
+        Case "APRIL": monthNum = 4
+        Case "MAY": monthNum = 5
+        Case "JUNE": monthNum = 6
+        Case "JULY": monthNum = 7
+        Case "AUGUST": monthNum = 8
+        Case "SEPTEMBER": monthNum = 9
+        Case "OCTOBER": monthNum = 10
+        Case "NOVEMBER": monthNum = 11
+        Case "DECEMBER": monthNum = 12
+        Case Else
+            MsgBox "Invalid month selected: " & monthName & vbCrLf & "Please select a valid month.", vbExclamation, "Invalid Month"
+            cmbMonth.SetFocus
+            Exit Sub
+    End Select
+
+    ' Convert day text to number
+    Dim dayNum As Long
+    If Not IsNumeric(dayText) Then
+        MsgBox "Invalid day value: " & dayText & vbCrLf & "Please enter a valid day (1-31).", vbExclamation, "Invalid Day"
+        txtDay.SetFocus
+        Exit Sub
+    End If
+    dayNum = CLng(dayText)
+
+    If dayNum < 1 Or dayNum > 31 Then
+        MsgBox "Day must be between 1 and 31. You entered: " & dayNum, vbExclamation, "Invalid Day"
+        txtDay.SetFocus
+        Exit Sub
+    End If
+
     Dim yr As Long
     yr = GetReportYear()
+
+    ' DIAGNOSTIC: Log values being used for date construction
+    Debug.Print "=== Ages Entry Date Construction ==="
+    Debug.Print "Year: " & yr
+    Debug.Print "Month Name: " & monthName
+    Debug.Print "Month Number: " & monthNum
+    Debug.Print "Day Text: " & dayText
+    Debug.Print "Day Number: " & dayNum
+    Debug.Print "cmbMonth.ListIndex: " & cmbMonth.ListIndex
+    Debug.Print "spnDay.Value: " & spnDay.Value
+
     Dim dt As Date
-    dt = DateSerial(yr, cmbMonth.ListIndex + 1, spnDay.Value)
+    On Error GoTo DateError
+    dt = DateSerial(yr, monthNum, dayNum)
+    On Error GoTo 0
+
+    Debug.Print "Constructed Date: " & Format(dt, "yyyy-mm-dd")
+    Debug.Print "===================================="
 
     Dim wc As String
     wc = wardCodes(cmbWard.ListIndex)
@@ -2365,11 +2669,19 @@ Private Sub btnSave_Click()
     Dim nhis As String
     If optInsured.Value Then nhis = "Insured" Else nhis = "Non-Insured"
 
-    ' Save
-    Application.Run "SaveAdmission", dt, wc, "-", "Age Entry", age, unit, sex, nhis
+    ' Check if we're editing or creating new
+    If editingRowIndex > 0 Then
+        ' Edit mode: Update existing row
+        UpdateAgesRow editingRowIndex, dt, wc, "-", age, unit, sex, nhis
+        editingRowIndex = 0  ' Clear edit mode after save
+        lblStatus.Caption = "Updated: " & age & " " & unit & " (" & sex & ", " & nhis & ")"
+    Else
+        ' New entry mode: Create new row
+        Application.Run "SaveAdmission", dt, wc, "-", "Age Entry", age, unit, sex, nhis
+        lblStatus.Caption = "Saved: " & age & " " & unit & " (" & sex & ", " & nhis & ")"
+    End If
 
     ' Post-Save Reset
-    lblStatus.Caption = "Saved: " & age & " " & unit & " (" & sex & ", " & nhis & ")"
     lblStatus.ForeColor = RGB(0, 128, 0) ' Green
 
     txtAge.Value = ""
@@ -2378,9 +2690,58 @@ Private Sub btnSave_Click()
 
     UpdateRecentList
     txtAge.SetFocus
+    Exit Sub
+
+DateError:
+    MsgBox "Error constructing date from selected month and day." & vbCrLf & _
+           "Month: " & monthName & " (" & monthNum & ")" & vbCrLf & _
+           "Day: " & dayNum & vbCrLf & _
+           "Year: " & yr & vbCrLf & vbCrLf & _
+           "Error: " & Err.Description, vbCritical, "Date Error"
+    Exit Sub
+End Sub
+
+Private Sub UpdateAgesRow(rowIndex As Long, admDate As Date, wardCode As String, _
+    patientID As String, age As Long, ageUnit As String, sex As String, nhis As String)
+    ' Update existing row instead of creating new one
+    On Error GoTo UpdateError
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    If rowIndex < 1 Or rowIndex > tbl.ListRows.Count Then
+        MsgBox "Error: Invalid row index", vbCritical, "Update Error"
+        Exit Sub
+    End If
+
+    Dim targetRow As ListRow
+    Set targetRow = tbl.ListRows(rowIndex)
+
+    With targetRow.Range
+        ' Update all fields (keep existing ID, update other fields)
+        .Cells(1, COL_ADM_DATE).Value = admDate
+        .Cells(1, COL_ADM_DATE).NumberFormat = "yyyy-mm-dd"
+        .Cells(1, COL_ADM_MONTH).Value = Month(admDate)
+        .Cells(1, COL_ADM_WARD_CODE).Value = wardCode
+        .Cells(1, COL_ADM_PATIENT_ID).Value = patientID
+        .Cells(1, COL_ADM_PATIENT_NAME).Value = "Age Entry"  ' Ages entry uses this for patient name
+        .Cells(1, COL_ADM_AGE).Value = age
+        .Cells(1, COL_ADM_AGE_UNIT).Value = ageUnit
+        .Cells(1, COL_ADM_SEX).Value = sex
+        .Cells(1, COL_ADM_NHIS).Value = nhis
+        .Cells(1, COL_ADM_TIMESTAMP).Value = Now
+        .Cells(1, COL_ADM_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
+    End With
+
+    UpdateRecentList
+    Exit Sub
+
+UpdateError:
+    MsgBox "Error updating age entry: " & Err.Description, vbCritical, "Update Error"
 End Sub
 
 Private Sub btnClose_Click()
+    editingRowIndex = 0  ' Clear edit mode
     Unload Me
 End Sub
 
@@ -2402,8 +2763,10 @@ Option Explicit
 
 Private wardCodes As Variant
 Private wardNames As Variant
+Private editingRowIndex As Long  ' 0 = new entry, >0 = editing specific row
 
 Private Sub UserForm_Initialize()
+    editingRowIndex = 0  ' Start in new entry mode
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
 
@@ -2466,6 +2829,9 @@ Private Sub lstRecent_Click()
     actualRow = startRow + lstRecent.ListIndex
 
     If actualRow > tbl.ListRows.Count Then Exit Sub
+
+    ' Store the row we're editing
+    editingRowIndex = actualRow
 
     ' Load the selected entry
     txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 1).Value, "dd/mm/yyyy")
@@ -2550,6 +2916,7 @@ Private Sub btnSaveClose_Click()
 End Sub
 
 Private Sub btnCancel_Click()
+    editingRowIndex = 0  ' Clear edit mode
     Unload Me
 End Sub
 
@@ -2582,28 +2949,94 @@ Private Function SaveDeathEntry() As Boolean
     Dim wc As String
     wc = wardCodes(cmbWard.ListIndex)
 
-    SaveDeath deathDate, wc, Trim(txtFolderNum.Value), _
-        Trim(txtName.Value), CLng(txtAge.Value), _
-        cmbAgeUnit.Value, sex, nhis, _
-        Trim(cmbCause.Value), chkWithin24.Value
+    ' Check if we're editing or creating new
+    If editingRowIndex > 0 Then
+        ' Edit mode: Update existing row
+        UpdateDeathRow editingRowIndex, deathDate, wc, Trim(txtFolderNum.Value), _
+            Trim(txtName.Value), CLng(txtAge.Value), cmbAgeUnit.Value, sex, nhis, _
+            Trim(cmbCause.Value), chkWithin24.Value
+        editingRowIndex = 0  ' Clear edit mode after save
+        lblStatus.Caption = "Updated: " & txtName.Value
+    Else
+        ' New entry mode: Create new row
+        SaveDeath deathDate, wc, Trim(txtFolderNum.Value), _
+            Trim(txtName.Value), CLng(txtAge.Value), _
+            cmbAgeUnit.Value, sex, nhis, _
+            Trim(cmbCause.Value), chkWithin24.Value
+        lblStatus.Caption = "Saved: " & txtName.Value
+    End If
 
-    lblStatus.Caption = "Saved: " & txtName.Value
     lblStatus.ForeColor = RGB(0, 128, 0)
-
     SaveDeathEntry = True
 End Function
 
+Private Sub UpdateDeathRow(rowIndex As Long, deathDate As Date, wardCode As String, _
+    folderNum As String, deceasedName As String, _
+    age As Long, ageUnit As String, sex As String, nhis As String, _
+    causeOfDeath As String, within24 As Boolean)
+    ' Update existing row instead of creating new one
+    On Error GoTo UpdateError
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
+
+    If rowIndex < 1 Or rowIndex > tbl.ListRows.Count Then
+        MsgBox "Error: Invalid row index", vbCritical, "Update Error"
+        Exit Sub
+    End If
+
+    Dim targetRow As ListRow
+    Set targetRow = tbl.ListRows(rowIndex)
+
+    With targetRow.Range
+        ' Update all fields (keep existing ID, update other fields)
+        .Cells(1, COL_DEATH_DATE).Value = deathDate
+        .Cells(1, COL_DEATH_DATE).NumberFormat = "yyyy-mm-dd"
+        .Cells(1, COL_DEATH_MONTH).Value = Month(deathDate)
+        .Cells(1, COL_DEATH_WARD_CODE).Value = wardCode
+        .Cells(1, COL_DEATH_FOLDER_NUM).Value = folderNum
+        .Cells(1, COL_DEATH_NAME).Value = deceasedName
+        .Cells(1, COL_DEATH_AGE).Value = age
+        .Cells(1, COL_DEATH_AGE_UNIT).Value = ageUnit
+        .Cells(1, COL_DEATH_SEX).Value = sex
+        .Cells(1, COL_DEATH_NHIS).Value = nhis
+        .Cells(1, COL_DEATH_CAUSE).Value = causeOfDeath
+        .Cells(1, COL_DEATH_WITHIN_24HR).Value = within24
+        .Cells(1, COL_DEATH_TIMESTAMP).Value = Now
+        .Cells(1, COL_DEATH_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
+    End With
+
+    UpdateRecentList
+    Exit Sub
+
+UpdateError:
+    MsgBox "Error updating death record: " & Err.Description, vbCritical, "Update Error"
+End Sub
+
 Private Function ParseDateDth(dateStr As String) As Date
     On Error GoTo badDate
+
+    ' Validate input
+    If Trim(dateStr) = "" Then
+        MsgBox "Date field is empty. Please enter a valid date.", vbExclamation, "Invalid Date"
+        ParseDateDth = #1/1/1900#
+        Exit Function
+    End If
+
     Dim parts() As String
     parts = Split(dateStr, "/")
     If UBound(parts) = 2 Then
         ParseDateDth = DateSerial(CLng(parts(2)), CLng(parts(1)), CLng(parts(0)))
         Exit Function
     End If
+
     ParseDateDth = CDate(dateStr)
     Exit Function
+
 badDate:
+    MsgBox "Invalid date format: " & dateStr & vbCrLf & _
+           "Please use dd/mm/yyyy format (e.g., 13/02/2026)", _
+           vbExclamation, "Invalid Date"
     ParseDateDth = #1/1/1900#
 End Function
 '''
@@ -3572,15 +4005,14 @@ def create_nav_buttons(wb):
     # Rebuild button (special orange button)
     _add_sheet_button(ws, "btnRebuild", "Control!A27:C27", "RebuildWorkbookWithPreferences")
 
-    # Diagnostic buttons (row 29, 31, 33, 35 for spacing)
+    # Diagnostic buttons (row 29, 31, 33 for spacing)
     ws.Range("A29").Value = "Import from Old Workbook"
     ws.Range("A31").Value = "Recalculate All Data"
     ws.Range("A33").Value = "Verify Calculations"
-    ws.Range("A35").Value = "Fix Date Formats"
     _add_sheet_button(ws, "btnImport", "Control!A29:C29", "ImportFromOldWorkbook")
     _add_sheet_button(ws, "btnRecalcAll", "Control!A31:C31", "RecalculateAllRows")
     _add_sheet_button(ws, "btnVerify", "Control!A33:C33", "VerifyCalculations")
-    _add_sheet_button(ws, "btnFixDates", "Control!A35:C35", "FixAllDateFormats")
+    # Note: "Fix Date Formats" button removed - date formats now initialized automatically during build
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -3694,7 +4126,7 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: WorkbookConfig):
                     IgnoreReadOnlyRecommended=True,
                     Notify=False
                 )
-                print("  ✓ Workbook opened successfully")
+                print("  [OK] Workbook opened successfully")
                 break
             except Exception as open_error:
                 if attempt < max_retries - 1:

@@ -31,8 +31,8 @@ class WorkbookConfig:
     year: int
     hospital_name: str = "HOHOE MUNICIPAL HOSPITAL"
     carry_forward_path: Optional[str] = None
-    wards_config_path: str = "wards_config.json"
-    preferences_path: str = "hospital_preferences.json"
+    wards_config_path: str = "config/wards_config.json"
+    preferences_path: str = "config/hospital_preferences.json"
 
     WARDS: List[WardDef] = field(default_factory=list)
     preferences: HospitalPreferences = field(default_factory=HospitalPreferences)

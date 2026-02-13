@@ -7,7 +7,7 @@ from openpyxl.worksheet.table import Table, TableStyleInfo
 from openpyxl.styles import Font, Alignment, Border, Side, PatternFill, numbers
 from openpyxl.utils import get_column_letter
 from openpyxl.worksheet.datavalidation import DataValidation
-from config import WorkbookConfig
+from .config import WorkbookConfig
 
 # ── Style constants ──────────────────────────────────────────────────────────
 
