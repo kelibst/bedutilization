@@ -20,4 +20,10 @@ completely different format. but for now let's focus on the import from previous
 organize the files properly. move the 
 scripts into a scripts folder. 
 
-refactor C:\Users\HIHMH\Desktop\projects\bedutilization\phase2_vba.py withou breaking features and functionality
+continue refactor C:\Users\HIHMH\Desktop\projects\bedutilization\phase2_vba.py withou breaking features and functionality, make sure that current functionaliest does
+not break. make a complete plan let's stick to it.
+
+I am not sure if the import workbook button imports all the entered deaths 
+and ages entried data. kindly verify if it does. if not make sure it does.
+
+continue refactoring the 
