@@ -17,7 +17,7 @@ import time
 from datetime import datetime
 from src.config import WorkbookConfig
 from src.phase1_structure import build_structure
-from src.phase2_vba import inject_vba
+from src.vba_injection import inject_vba
 
 
 def main():

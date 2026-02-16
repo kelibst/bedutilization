@@ -17,7 +17,8 @@ This is a Ghana Health Service hospital bed utilization management system built 
    - Excel Tables (ListObjects) for all data
    - Formulas and formatting
 
-2. **Phase 2** ([phase2_vba.py](phase2_vba.py)): Injects VBA via win32com
+2. **Phase 2** (vba_injection package): Injects VBA via win32com
+   - Package structure: utils, ui_helpers, userform_builder, navigation, core
    - VBA Modules: modConfig, modDataAccess, modReports, modNavigation, modYearEnd
    - UserForms: Daily Entry, Record Admission, Record Death, Record Ages Entry, Ward Manager, Preferences Manager
    - Navigation buttons on Control sheet
@@ -243,7 +244,8 @@ python build_workbook.py
    - Run `python build_workbook.py`
 
 2. **VBA Changes** (modules, forms, logic):
-   - Edit [phase2_vba.py](phase2_vba.py)
+   - Edit VBA source files in `src/vba/modules/`, `src/vba/forms/`, or `src/vba/workbook/`
+   - Or edit Python injection code in `src/vba_injection/` package
    - Run `python build_workbook.py`
 
 3. **Ward Configuration**:
@@ -271,19 +273,45 @@ python build_workbook.py
 ```
 bedutilization/
 ├── build_workbook.py           # Main build script
-├── config.py                   # Configuration classes
-├── phase1_structure.py         # Excel structure generation
-├── phase2_vba.py              # VBA injection
-├── wards_config.json          # Ward definitions
-├── hospital_preferences.json  # Hospital preferences
-├── carry_forward_2026.json    # Year-end carry forward data
-├── Bed_Utilization_2026new.xlsm  # Generated workbook
-├── ocr_tool/                  # OCR tool (standalone)
+├── src/
+│   ├── config.py               # Configuration classes
+│   ├── phase1_structure.py     # Excel structure generation
+│   ├── vba_injection/          # VBA injection package (refactored)
+│   │   ├── __init__.py         # Package exports
+│   │   ├── core.py             # Main injection logic
+│   │   ├── userform_builder.py # UserForm creation
+│   │   ├── ui_helpers.py       # UI control helpers
+│   │   ├── navigation.py       # Navigation buttons
+│   │   └── utils.py            # VBA file utilities
+│   └── vba/                    # VBA source files
+│       ├── modules/            # VBA standard modules
+│       │   ├── modConfig.bas
+│       │   ├── modDataAccess.bas
+│       │   ├── modReports.bas
+│       │   ├── modNavigation.bas
+│       │   └── modYearEnd.bas
+│       ├── forms/              # VBA UserForm code
+│       │   ├── frmDailyEntry.vba
+│       │   ├── frmAdmission.vba
+│       │   ├── frmAgesEntry.vba
+│       │   ├── frmDeath.vba
+│       │   ├── frmWardManager.vba
+│       │   └── frmPreferencesManager.vba
+│       └── workbook/           # Workbook/Sheet event code
+│           ├── ThisWorkbook.cls
+│           └── Sheet_DailyData.cls
+├── config/
+│   ├── wards_config.json       # Ward definitions
+│   └── hospital_preferences.json # Hospital preferences
+├── carry_forward_2026.json     # Year-end carry forward data
+├── Bed_Utilization_2026.xlsm   # Generated workbook
+├── ocr_tool/                   # OCR tool (standalone)
 │   ├── models/form_schema.py
 │   ├── extraction/trocr_engine.py
 │   ├── preprocessing/enhance.py
 │   └── ...
-└── plan/documentations/       # Documentation
+└── docs/                       # Documentation
+    ├── GEMINI.md
     ├── TODO.txt
     ├── WARD_CONFIGURATION_GUIDE.md
     └── ...
