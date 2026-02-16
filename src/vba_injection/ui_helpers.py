@@ -141,11 +141,11 @@ def add_spinner(designer: Any, name: str, left: int, top: int,
     return ctrl
 
 
-def add_button(designer: Any, name: str, caption: str, left: int, top: int, 
+def add_button(designer: Any, name: str, caption: str, left: int, top: int,
                width: int, height: int) -> Any:
     """
     Add a command button control to a UserForm designer.
-    
+
     Args:
         designer: UserForm designer object
         name: Control name
@@ -154,13 +154,38 @@ def add_button(designer: Any, name: str, caption: str, left: int, top: int,
         top: Top position in points
         width: Width in points
         height: Height in points
-        
+
     Returns:
         The created button control
     """
     ctrl = designer.Controls.Add("Forms.CommandButton.1")
     ctrl.Name = name
     ctrl.Caption = caption
+    ctrl.Left = left
+    ctrl.Top = top
+    ctrl.Width = width
+    ctrl.Height = height
+    return ctrl
+
+
+def add_listbox(designer: Any, name: str, left: int, top: int,
+                width: int, height: int) -> Any:
+    """
+    Add a listbox control to a UserForm designer.
+
+    Args:
+        designer: UserForm designer object
+        name: Control name
+        left: Left position in points
+        top: Top position in points
+        width: Width in points
+        height: Height in points
+
+    Returns:
+        The created listbox control
+    """
+    ctrl = designer.Controls.Add("Forms.ListBox.1")
+    ctrl.Name = name
     ctrl.Left = left
     ctrl.Top = top
     ctrl.Width = width

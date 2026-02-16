@@ -7,7 +7,7 @@ Each function creates a complete UserForm with all controls and injects the VBA 
 from typing import Any
 from .ui_helpers import (
     add_label, add_textbox, add_combobox, add_optionbutton,
-    add_button, add_spinner, add_date_entry_control
+    add_button, add_spinner, add_date_entry_control, add_listbox
 )
 from .utils import get_vba_path, read_vba_file
 from .calendar_form_builder import create_calendar_picker_form
@@ -631,4 +631,70 @@ def create_preferences_manager_form(vbproj: Any) -> None:
     add_button(d, "btnExport", "Export to JSON (without rebuild)", 20, y_buttons, 310, 28)
 
     code_path = get_vba_path("frmPreferencesManager.vba", "forms")
+    form.CodeModule.AddFromString(read_vba_file(code_path))
+
+
+def create_validate_ward_form(vbproj: Any) -> None:
+    """
+    Create the frmValidateWard UserForm programmatically.
+
+    This form allows users to validate that individual admission entries
+    match daily bed-state totals for a specific ward and month.
+
+    Args:
+        vbproj: VBProject object from Excel workbook
+    """
+    form = vbproj.VBComponents.Add(3)  # vbext_ct_MSForm
+    form.Name = "frmValidateWard"
+    form.Properties("Caption").Value = "Validate Ward Admissions"
+    form.Properties("Width").Value = 460
+    form.Properties("Height").Value = 450
+
+    d = form.Designer
+    y = 12  # current Y position
+
+    # Instructions label
+    lbl_instr = add_label(d, "lblInstructions",
+        "Select a month and ward to validate admission counts:",
+        12, y, 420, 18)
+    lbl_instr.Font.Bold = True
+    y += 28
+
+    # Month selection
+    add_label(d, "lblMonth", "Month:", 12, y, 50, 18)
+    cmbMonth = add_combobox(d, "cmbMonth", 70, y, 120, 22, style=2)  # DropDownList
+    y += 30
+
+    # Ward selection
+    add_label(d, "lblWard", "Ward:", 12, y, 50, 18)
+    cmbWard = add_combobox(d, "cmbWard", 70, y, 200, 22, style=2)  # DropDownList
+    y += 35
+
+    # Action buttons
+    add_button(d, "btnValidate", "Validate Month", 12, y, 120, 30)
+    add_button(d, "btnExport", "Export Results", 142, y, 120, 30)
+    y += 40
+
+    # Results list box
+    add_label(d, "lblResults", "Validation Results:", 12, y, 150, 18)
+    y += 22
+
+    lstResults = add_listbox(d, "lstResults", 12, y, 420, 220)
+    lstResults.ColumnCount = 4
+    lstResults.ColumnWidths = "80 pt;60 pt;80 pt;70 pt"
+    y += 230
+
+    # Summary label
+    lblSummary = add_label(d, "lblSummary", "Select month and ward, then click 'Validate Month'",
+                          12, y, 420, 20)
+    lblSummary.Font.Bold = True
+    lblSummary.TextAlign = 2  # fmTextAlignCenter
+    lblSummary.ForeColor = 0x646464  # Gray
+    y += 30
+
+    # Close button
+    add_button(d, "btnClose", "Close", 320, y, 120, 30)
+
+    # Inject VBA code
+    code_path = get_vba_path("frmValidateWard.vba", "forms")
     form.CodeModule.AddFromString(read_vba_file(code_path))

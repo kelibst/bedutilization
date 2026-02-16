@@ -40,6 +40,7 @@ Private Sub UserForm_Initialize()
     On Error GoTo 0
 
     UpdateRecentList
+    UpdateValidationDisplay
 End Sub
 
 Private Sub UpdateRecentList(Optional filterDate As Variant)
@@ -93,6 +94,56 @@ Private Sub UpdateRecentList(Optional filterDate As Variant)
     End If
 
     Application.ScreenUpdating = True
+End Sub
+
+'==============================================================================
+' Update Validation Display
+' Shows comparison between daily bed-state total and individual admission count
+'==============================================================================
+Private Sub UpdateValidationDisplay()
+    ' Show admission validation status for current date/ward
+    On Error Resume Next
+
+    ' Check if lblValidation control exists (it's optional)
+    Dim hasLabel As Boolean
+    hasLabel = False
+    Dim ctrl As Control
+    For Each ctrl In Me.Controls
+        If ctrl.Name = "lblValidation" Then
+            hasLabel = True
+            Exit For
+        End If
+    Next ctrl
+    If Not hasLabel Then Exit Sub
+
+    ' Need valid date and ward
+    If cmbWard.ListIndex < 0 Then Exit Sub
+    If Trim(txtDate.Value) = "" Then Exit Sub
+
+    Dim checkDate As Variant
+    Dim errMsg As String
+    checkDate = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If IsEmpty(checkDate) Then Exit Sub
+
+    Dim wc As String
+    wc = wardCodes(cmbWard.ListIndex)
+
+    Dim dailyTotal As Long
+    Dim individualCount As Long
+    Dim validationMsg As String
+
+    If ValidateAdmissionCount(CDate(checkDate), wc, dailyTotal, individualCount, validationMsg) Then
+        lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [OK]"
+        lblValidation.ForeColor = RGB(0, 128, 0)  ' Green
+    Else
+        If dailyTotal = 0 And InStr(validationMsg, "No daily bed-state") > 0 Then
+            lblValidation.Caption = "Daily Total: Not entered yet"
+            lblValidation.ForeColor = RGB(128, 128, 128)  ' Gray
+        Else
+            lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [MISMATCH]"
+            lblValidation.ForeColor = RGB(255, 0, 0)  ' Red
+        End If
+    End If
 End Sub
 
 ' Event handler for "All Records" option
@@ -173,42 +224,10 @@ Private Sub lstRecent_Click()
         Exit Sub
     End If
 
-    ' Store the row we're editing
-    editingRowIndex = actualRow
-
-    ' Load the selected entry
-    txtDate.Value = Format(tbl.ListRows(actualRow).Range(1, 2).Value, "dd/mm/yyyy")
-
-    ' Load ward
-    Dim wc As String
-    wc = tbl.ListRows(actualRow).Range(1, 4).Value
-    Dim j As Long
-    For j = 0 To UBound(wardCodes)
-        If wardCodes(j) = wc Then
-            cmbWard.ListIndex = j
-            Exit For
-        End If
-    Next j
-
-    ' Load patient details
-    txtPatientID.Value = tbl.ListRows(actualRow).Range(1, 5).Value
-    txtPatientName.Value = tbl.ListRows(actualRow).Range(1, 6).Value
-    txtAge.Value = CStr(tbl.ListRows(actualRow).Range(1, 7).Value)
-    cmbAgeUnit.Value = tbl.ListRows(actualRow).Range(1, 8).Value
-
-    ' Load sex
-    If tbl.ListRows(actualRow).Range(1, 9).Value = "M" Then
-        optMale.Value = True
-    Else
-        optFemale.Value = True
-    End If
-
-    ' Load NHIS
-    If tbl.ListRows(actualRow).Range(1, 10).Value = "Insured" Then
-        optInsured.Value = True
-    Else
-        optNonInsured.Value = True
-    End If
+    ' Load the record
+    LoadRecordFromRow actualRow
+    lblStatus.Caption = "Editing: " & namePart
+    lblStatus.ForeColor = RGB(255, 128, 0)  ' Orange
     Exit Sub
 
 LoadError:
@@ -228,6 +247,7 @@ Private Sub cmbWard_Change()
             cmbAgeUnit.ListIndex = 0  ' Years
         End If
     End If
+    UpdateValidationDisplay
 End Sub
 
 Private Sub btnSaveNew_Click()
@@ -238,6 +258,7 @@ Private Sub btnSaveNew_Click()
         txtAge.Value = ""
         txtPatientID.SetFocus
         UpdateRecentList
+        UpdateValidationDisplay
     End If
 End Sub
 
@@ -357,5 +378,114 @@ End Sub
 '==============================================================================
 Private Sub txtDate_picker_Click()
     ' Show calendar picker and update date field
-    modDateUtils.ShowDatePicker txtDate
+    If modDateUtils.ShowDatePicker(txtDate) Then
+        ' Date was updated, check for existing record
+        CheckAndLoadExistingRecord
+    End If
+End Sub
+
+'==============================================================================
+' Date Field Change Handler
+' When date changes (typed or picked), check for existing records
+'==============================================================================
+Private Sub txtDate_AfterUpdate()
+    CheckAndLoadExistingRecord
+    UpdateValidationDisplay
+End Sub
+
+'==============================================================================
+' Check if record exists for current date + ward, and load it
+'==============================================================================
+Private Sub CheckAndLoadExistingRecord()
+    ' Only check if we have a valid date and ward selected
+    If Trim(txtDate.Value) = "" Or cmbWard.ListIndex < 0 Then Exit Sub
+
+    On Error Resume Next
+    Dim checkDate As Variant
+    Dim errMsg As String
+    checkDate = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If IsEmpty(checkDate) Then Exit Sub
+
+    ' Get current ward code
+    Dim wc As String
+    wc = wardCodes(cmbWard.ListIndex)
+
+    ' Search for existing record with this date + ward
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    Dim i As Long
+    For i = tbl.ListRows.Count To 1 Step -1  ' Search backwards (most recent first)
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) Then
+            Dim entryDate As Date
+            entryDate = CDate(tbl.ListRows(i).Range(1, 2).Value)
+            Dim entryWard As String
+            entryWard = tbl.ListRows(i).Range(1, 4).Value
+
+            ' If we find a match, load it
+            If DateValue(entryDate) = DateValue(checkDate) And entryWard = wc Then
+                LoadRecordFromRow i
+                lblStatus.Caption = "Editing existing record for " & Format(checkDate, "dd/mm/yyyy")
+                lblStatus.ForeColor = RGB(255, 128, 0)  ' Orange
+                Exit Sub
+            End If
+        End If
+    Next i
+
+    ' No existing record found - stay in new entry mode
+    editingRowIndex = 0
+    lblStatus.Caption = "New admission for " & Format(checkDate, "dd/mm/yyyy")
+    lblStatus.ForeColor = RGB(0, 128, 0)  ' Green
+    UpdateValidationDisplay
+End Sub
+
+'==============================================================================
+' Load a specific record by row index
+'==============================================================================
+Private Sub LoadRecordFromRow(rowIndex As Long)
+    On Error GoTo LoadError
+
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    ' Store the row we're editing
+    editingRowIndex = rowIndex
+
+    ' Load the record (date is already set)
+    txtDate.Value = Format(tbl.ListRows(rowIndex).Range(1, 2).Value, "dd/mm/yyyy")
+
+    ' Load ward
+    Dim wc As String
+    wc = tbl.ListRows(rowIndex).Range(1, 4).Value
+    Dim j As Long
+    For j = 0 To UBound(wardCodes)
+        If wardCodes(j) = wc Then
+            cmbWard.ListIndex = j
+            Exit For
+        End If
+    Next j
+
+    ' Load patient details
+    txtPatientID.Value = tbl.ListRows(rowIndex).Range(1, 5).Value
+    txtPatientName.Value = tbl.ListRows(rowIndex).Range(1, 6).Value
+    txtAge.Value = CStr(tbl.ListRows(rowIndex).Range(1, 7).Value)
+    cmbAgeUnit.Value = tbl.ListRows(rowIndex).Range(1, 8).Value
+
+    ' Load sex
+    If tbl.ListRows(rowIndex).Range(1, 9).Value = "M" Then
+        optMale.Value = True
+    Else
+        optFemale.Value = True
+    End If
+
+    ' Load NHIS
+    If tbl.ListRows(rowIndex).Range(1, 10).Value = "Insured" Then
+        optInsured.Value = True
+    Else
+        optNonInsured.Value = True
+    End If
+    Exit Sub
+
+LoadError:
+    MsgBox "Error loading record: " & Err.Description, vbCritical
 End Sub

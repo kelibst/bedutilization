@@ -42,6 +42,7 @@ Private Sub UserForm_Initialize()
     On Error GoTo 0
 
     UpdateRecentList
+    UpdateValidationDisplay
     txtAge.SetFocus
 End Sub
 
@@ -100,6 +101,56 @@ Private Sub UpdateRecentList(Optional filterDate As Variant)
     End If
 
     Application.ScreenUpdating = True
+End Sub
+
+'==============================================================================
+' Update Validation Display
+' Shows comparison between daily bed-state total and individual admission count
+'==============================================================================
+Private Sub UpdateValidationDisplay()
+    ' Show admission validation status for current date/ward
+    On Error Resume Next
+
+    ' Check if lblValidation control exists (it's optional)
+    Dim hasLabel As Boolean
+    hasLabel = False
+    Dim ctrl As Control
+    For Each ctrl In Me.Controls
+        If ctrl.Name = "lblValidation" Then
+            hasLabel = True
+            Exit For
+        End If
+    Next ctrl
+    If Not hasLabel Then Exit Sub
+
+    ' Need valid date and ward
+    If cmbWard.ListIndex < 0 Then Exit Sub
+    If Trim(txtDate.Value) = "" Then Exit Sub
+
+    Dim checkDate As Variant
+    Dim errMsg As String
+    checkDate = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If IsEmpty(checkDate) Then Exit Sub
+
+    Dim wc As String
+    wc = wardCodes(cmbWard.ListIndex)
+
+    Dim dailyTotal As Long
+    Dim individualCount As Long
+    Dim validationMsg As String
+
+    If ValidateAdmissionCount(CDate(checkDate), wc, dailyTotal, individualCount, validationMsg) Then
+        lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [OK]"
+        lblValidation.ForeColor = RGB(0, 128, 0)  ' Green
+    Else
+        If dailyTotal = 0 And InStr(validationMsg, "No daily bed-state") > 0 Then
+            lblValidation.Caption = "Daily Total: Not entered yet"
+            lblValidation.ForeColor = RGB(128, 128, 128)  ' Gray
+        Else
+            lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [MISMATCH]"
+            lblValidation.ForeColor = RGB(255, 0, 0)  ' Red
+        End If
+    End If
 End Sub
 
 ' Event handler for "All Records" option
@@ -311,6 +362,7 @@ Private Sub btnSave_Click()
     ' Keep persistent selections (Ward, Date, Sex, NHIS)
 
     UpdateRecentList
+    UpdateValidationDisplay
     txtAge.SetFocus
     Exit Sub
 
@@ -369,5 +421,7 @@ End Sub
 '==============================================================================
 Private Sub txtDate_picker_Click()
     ' Show calendar picker and update date field
-    modDateUtils.ShowDatePicker txtDate
+    If modDateUtils.ShowDatePicker(txtDate) Then
+        UpdateValidationDisplay
+    End If
 End Sub

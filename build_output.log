@@ -1,0 +1,44 @@
+============================================================
+  Bed Utilization Workbook Generator
+  Ghana Health Service - Hohoe Municipal Hospital
+  Year: 2026
+============================================================
+Loaded 9 wards from config/wards_config.json
+Loaded hospital preferences from config/hospital_preferences.json
+
+--- Phase 1: Building workbook structure ---
+Phase 1 complete: C:\Users\HIHMH\Desktop\projects\bedutilization\Bed_Utilization_2026.xlsx
+
+--- Phase 2: Injecting VBA macros ---
+Waiting for file system to settle...
+Opening file: C:\Users\HIHMH\Desktop\projects\bedutilization\Bed_Utilization_2026.xlsx
+Removing existing xlsm: C:\Users\HIHMH\Desktop\projects\bedutilization\Bed_Utilization_2026.xlsm
+Performing pre-flight checks...
+Starting Excel for VBA injection...
+Opening workbook: C:\Users\HIHMH\Desktop\projects\bedutilization\Bed_Utilization_2026.xlsx
+  [OK] Workbook opened successfully
+  Injecting VBA modules...
+  Injecting ThisWorkbook code...
+  Injecting DailyData worksheet event...
+    [OK] Event injected into DailyData worksheet
+  Creating UserForms...
+  [OK] Created calendar picker form: frmCalendarPicker
+  Adding navigation buttons...
+  Hiding data sheets...
+  Initializing date column formats...
+  Saving as C:\Users\HIHMH\Desktop\projects\bedutilization\Bed_Utilization_2026.xlsm...
+Phase 2 complete: C:\Users\HIHMH\Desktop\projects\bedutilization\Bed_Utilization_2026.xlsm
+
+============================================================
+  SUCCESS! Workbook generated:
+  C:\Users\HIHMH\Desktop\projects\bedutilization\Bed_Utilization_2026.xlsm
+============================================================
+
+Next steps:
+  1. Open Bed_Utilization_2026.xlsm in Excel
+  2. Enable macros when prompted
+  3. Use the buttons on the Control sheet to enter data
+
+At year end:
+  1. Click 'Export Year-End' to create carry_forward_2026.json
+  2. Run: python build_workbook.py --year 2027 --carry-forward carry_forward_2026.json

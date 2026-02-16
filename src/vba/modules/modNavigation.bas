@@ -33,6 +33,10 @@ Public Sub ShowWardManager()
     frmWardManager.Show
 End Sub
 
+Public Sub ShowValidateWard()
+    frmValidateWard.Show
+End Sub
+
 Public Sub ExportWardConfig()
     ExportWardsConfig
 End Sub
