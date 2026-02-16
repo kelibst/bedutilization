@@ -21,6 +21,7 @@ from .userform_builder import (
     create_ward_manager_form,
     create_preferences_manager_form,
 )
+from .calendar_form_builder import create_calendar_picker_form
 from .navigation import create_nav_buttons
 
 
@@ -175,6 +176,7 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: "WorkbookConfig") -> None
         modules = [
             ("modConfig", "modConfig.bas"),
             ("modDataAccess", "modDataAccess.bas"),
+            ("modDateUtils", "modDateUtils.bas"),
             ("modReports", "modReports.bas"),
             ("modNavigation", "modNavigation.bas"),
             ("modYearEnd", "modYearEnd.bas"),
@@ -219,6 +221,7 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: "WorkbookConfig") -> None
 
         # 3. Create UserForms
         print("  Creating UserForms...")
+        create_calendar_picker_form(vbproj)  # Create calendar picker first (used by other forms)
         create_daily_entry_form(vbproj)
         create_admission_form(vbproj)
         create_ages_entry_form(vbproj)

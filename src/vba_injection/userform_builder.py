@@ -6,10 +6,74 @@ Each function creates a complete UserForm with all controls and injects the VBA 
 """
 from typing import Any
 from .ui_helpers import (
-    add_label, add_textbox, add_combobox, add_optionbutton, 
-    add_button, add_spinner
+    add_label, add_textbox, add_combobox, add_optionbutton,
+    add_button, add_spinner, add_date_entry_control
 )
 from .utils import get_vba_path, read_vba_file
+from .calendar_form_builder import create_calendar_picker_form
+
+
+def add_date_filter_controls(d: Any, y: int, width: int = 390) -> int:
+    """
+    Add date filter controls for recent list filtering.
+
+    Adds:
+    - Label "Filter by Date:"
+    - Option button "All Records" (default)
+    - Option button "Specific Date"
+    - DTPicker control for date selection
+    - Status label showing entry count
+
+    Args:
+        d: Form designer object
+        y: Current Y position
+        width: Width of the filter area
+
+    Returns:
+        New Y position after adding controls
+    """
+    # Divider line
+    sep = add_label(d, "lblFilterSep", "", 12, y, width, 1)
+    sep.BackColor = 0xC0C0C0
+    y += 8
+
+    # Filter label
+    add_label(d, "lblFilterLabel", "Filter by Date:", 12, y, 100, 18)
+    y += 20
+
+    # Option buttons for filter mode
+    opt1 = add_optionbutton(d, "optAllRecords", "All Records", 12, y, 120, 18)
+    opt1.Value = True  # Default selected
+    opt2 = add_optionbutton(d, "optSpecificDate", "Specific Date:", 140, y, 110, 18)
+    y += 24
+
+    # Date control - try DTPicker first, fallback to TextBox
+    # Always use "dtpFilterDate" as name for consistency with VBA code
+    try:
+        dtp = d.Controls.Add("MSComCtl2.DTPicker.2")
+        dtp.Name = "dtpFilterDate"
+        dtp.Left = 140
+        dtp.Top = y
+        dtp.Width = 120
+        dtp.Height = 22
+        # Format: dd/mm/yyyy
+        dtp.Format = 3  # dtpCustom
+        dtp.CustomFormat = "dd/MM/yyyy"
+        dtp.Enabled = False  # Disabled by default (All Records is selected)
+    except Exception:
+        # Fallback to TextBox if DTPicker not available
+        # Use same name "dtpFilterDate" for VBA compatibility
+        txt = add_textbox(d, "dtpFilterDate", 140, y, 120, 22)
+        add_label(d, "lblDateFormat", "(dd/mm/yyyy)", 265, y+2, 80, 18)
+
+    y += 28
+
+    # Status label (shows count of entries)
+    lbl = add_label(d, "lblRecentStatus", "Last 10 entries", 12, y, width, 18)
+    lbl.ForeColor = 0x808080  # Gray text
+    y += 20
+
+    return y
 
 
 def create_daily_entry_form(vbproj: Any) -> None:
@@ -112,6 +176,9 @@ def create_daily_entry_form(vbproj: Any) -> None:
     add_button(d, "btnCancel", "Cancel", 12, y, 90, 28)
     y += 38
 
+    # Date filter controls
+    y = add_date_filter_controls(d, y, 390)
+
     # Recent entries list
     add_label(d, "lblRecent", "Recent Daily Entries:", 12, y, 150, 18)
     y += 20
@@ -145,9 +212,8 @@ def create_admission_form(vbproj: Any) -> None:
     d = form.Designer
     y = 12
 
-    # Date
-    add_label(d, "lblDateLabel", "Admission Date (dd/mm/yyyy):", 12, y, 160, 18)
-    add_textbox(d, "txtDate", 180, y, 120, 20)
+    # Date with calendar picker
+    lbl, txt, btn = add_date_entry_control(d, "txtDate", "Admission Date:", 12, y, label_width=120, textbox_width=100)
     y += 28
 
     # Ward
@@ -193,6 +259,9 @@ def create_admission_form(vbproj: Any) -> None:
     add_button(d, "btnCancel", "Cancel", 250, y, 90, 30)
     y += 38
 
+    # Date filter controls
+    y = add_date_filter_controls(d, y, 380)
+
     # Recent admissions list
     add_label(d, "lblRecent", "Recent Admissions:", 12, y, 150, 18)
     y += 20
@@ -232,9 +301,8 @@ def create_ages_entry_form(vbproj: Any) -> None:
     add_combobox(d, "cmbWard", 100, y, 200, 22)
     y += 32
 
-    # Date
-    add_label(d, "lblDate", "Date:", 12, y, 60, 18)
-    add_textbox(d, "txtDate", 80, y, 120, 20)
+    # Date with calendar picker
+    lbl, txt, btn = add_date_entry_control(d, "txtDate", "Date:", 12, y, label_width=60, textbox_width=100)
     y += 32
 
     # Divider
@@ -273,6 +341,9 @@ def create_ages_entry_form(vbproj: Any) -> None:
     add_button(d, "btnClose", "Close", 160, y, 100, 30)
     y += 38
 
+    # Date filter controls
+    y = add_date_filter_controls(d, y, 310)
+
     # Recent entries list
     add_label(d, "lblRecent", "Recent Age Entries:", 12, y, 150, 18)
     y += 20
@@ -306,9 +377,8 @@ def create_death_form(vbproj: Any) -> None:
     d = form.Designer
     y = 12
 
-    # Date
-    add_label(d, "lblDateLabel", "Date of Death (dd/mm/yyyy):", 12, y, 170, 18)
-    add_textbox(d, "txtDate", 190, y, 120, 20)
+    # Date with calendar picker
+    lbl, txt, btn = add_date_entry_control(d, "txtDate", "Date of Death:", 12, y, label_width=120, textbox_width=100)
     y += 28
 
     # Ward
@@ -374,6 +444,9 @@ def create_death_form(vbproj: Any) -> None:
     add_button(d, "btnSaveClose", "Save && Close", 130, y, 110, 30)
     add_button(d, "btnCancel", "Cancel", 250, y, 90, 30)
     y += 38
+
+    # Date filter controls
+    y = add_date_filter_controls(d, y, 390)
 
     # Recent deaths list
     add_label(d, "lblRecent", "Recent Deaths:", 12, y, 150, 18)

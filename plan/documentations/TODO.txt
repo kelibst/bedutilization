@@ -24,6 +24,8 @@ continue refactor C:\Users\HIHMH\Desktop\projects\bedutilization\phase2_vba.py w
 not break. make a complete plan let's stick to it.
 
 I am not sure if the import workbook button imports all the entered deaths 
-and ages entried data. kindly verify if it does. if not make sure it does.
+and ages entried data. kindly verify if it does. if not make sure it does. also the visual feed let's update it so that 
+it shows the entries for a specific entry date and not the last one entered. let's plan this carefully first
 
-continue refactoring the 
+awesome, now for backward compatibility with facilities that do not have have an initial version of the workbook and therefore cannot import from the 
+workbook. i have in mind a plan that is they copy what they already in excel sheed as just the data. that is if it is the ward. state then 

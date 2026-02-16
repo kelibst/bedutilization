@@ -91,7 +91,7 @@ End Function
 
 Private Function GenerateNextID(tbl As ListObject, prefix As String) As String
     ' Generates sequential IDs in format: [prefix]YYYY-#####
-    ' prefix: Optional prefix (e.g., "D" for deaths, "" for admissions)
+    ' prefix: Optional prefix (e.g., "D" for deaths, "A" for admissions)
     ' Returns: Next available ID string
 
     Dim yr As Long
@@ -106,18 +106,33 @@ Private Function GenerateNextID(tbl As ListObject, prefix As String) As String
         End If
     End If
 
-    ' Parse last ID and increment
-    Dim lastID As String, dashPos As Long, num As Long
-    lastID = CStr(tbl.ListRows(tbl.ListRows.Count).Range(1, 1).Value)
-    dashPos = InStr(lastID, "-")
+    ' Find the maximum ID number across ALL rows (not just last row)
+    Dim maxNum As Long
+    maxNum = 0
+    Dim i As Long
+    Dim currentID As String
+    Dim dashPos As Long
+    Dim currentNum As Long
 
-    If dashPos > 0 Then
-        num = CLng(Mid(lastID, dashPos + 1)) + 1
-    Else
-        num = 1
-    End If
+    For i = 1 To tbl.ListRows.Count
+        currentID = CStr(tbl.ListRows(i).Range(1, 1).Value)
 
-    GenerateNextID = prefix & yr & "-" & Format(num, "00000")
+        ' Only process IDs that match our prefix and year
+        If Left(currentID, Len(prefix & yr & "-")) = prefix & yr & "-" Then
+            dashPos = InStr(currentID, "-")
+            If dashPos > 0 Then
+                On Error Resume Next
+                currentNum = CLng(Mid(currentID, dashPos + 1))
+                If Err.Number = 0 And currentNum > maxNum Then
+                    maxNum = currentNum
+                End If
+                On Error GoTo 0
+            End If
+        End If
+    Next i
+
+    ' Generate next ID
+    GenerateNextID = prefix & yr & "-" & Format(maxNum + 1, "00000")
 End Function
 
 '===================================================================
@@ -838,7 +853,17 @@ Public Sub ImportFromOldWorkbook()
         On Error GoTo ErrorHandler ' Restore main handler
     Next i
 
-    ' Close old workbook
+    ' Import individual death records BEFORE closing workbook
+    Dim deathsResult As String
+    deathsResult = ImportIndividualRecords(oldWB, "tblDeaths", "DeathsData", _
+                                          "tblDeaths", "DeathsData", 13, COL_DEATH_ID)
+
+    ' Import individual admission records BEFORE closing workbook
+    Dim admissionsResult As String
+    admissionsResult = ImportIndividualRecords(oldWB, "tblAdmissions", "Admissions", _
+                                              "tblAdmissions", "Admissions", 11, COL_ADM_ID)
+
+    ' Close old workbook NOW that we're done importing
     oldWB.Close SaveChanges:=False
     Set oldWB = Nothing
 
@@ -859,11 +884,14 @@ Public Sub ImportFromOldWorkbook()
     Application.EnableEvents = True
 
     Dim msg As String
-    msg = "Successfully imported " & importCount & " rows!" & vbCrLf & _
+    msg = "IMPORT COMPLETE!" & vbCrLf & vbCrLf & _
+          "Daily Data: " & importCount & " records" & vbCrLf & _
+          deathsResult & vbCrLf & _
+          admissionsResult & vbCrLf & vbCrLf & _
           "All calculations have been recalculated automatically."
-          
+
     If importErrors > 0 Then
-        msg = msg & vbCrLf & vbCrLf & "WARNING: " & importErrors & " rows failed to import." & vbCrLf & _
+        msg = msg & vbCrLf & vbCrLf & "WARNING: " & importErrors & " daily data rows failed to import." & vbCrLf & _
               "First 5 errors:" & vbCrLf & errorLog
     End If
 
@@ -884,6 +912,148 @@ ErrorHandler:
 End Sub
 
 '===================================================================
+' HELPER: Import Individual Records (Deaths, Admissions, etc.)
+'===================================================================
+Private Function ImportIndividualRecords(oldWB As Workbook, _
+    oldTableName As String, oldSheetName As String, _
+    newTableName As String, newSheetName As String, _
+    columnCount As Integer, idColumn As Integer) As String
+
+    On Error GoTo ErrorHandler
+
+    ' Result message with import stats
+    Dim resultMsg As String
+    resultMsg = ""
+
+    ' Validate old workbook has the table
+    Dim oldWS As Worksheet
+    On Error Resume Next
+    Set oldWS = oldWB.Sheets(oldSheetName)
+    On Error GoTo ErrorHandler
+
+    If oldWS Is Nothing Then
+        resultMsg = oldTableName & ": Sheet not found (skipped)"
+        ImportIndividualRecords = resultMsg
+        Exit Function
+    End If
+
+    Dim oldTbl As ListObject
+    On Error Resume Next
+    Set oldTbl = oldWS.ListObjects(oldTableName)
+    On Error GoTo ErrorHandler
+
+    If oldTbl Is Nothing Then
+        resultMsg = oldTableName & ": Table not found (skipped)"
+        ImportIndividualRecords = resultMsg
+        Exit Function
+    End If
+
+    ' Get new workbook table
+    Dim newWS As Worksheet
+    Set newWS = ThisWorkbook.Sheets(newSheetName)
+    Dim newTbl As ListObject
+    Set newTbl = newWS.ListObjects(newTableName)
+
+    ' Track stats
+    Dim importedCount As Integer
+    Dim duplicateCount As Integer
+    Dim errorCount As Integer
+    importedCount = 0
+    duplicateCount = 0
+    errorCount = 0
+
+    ' Build dictionary of existing IDs to detect duplicates
+    Dim existingIDs As Object
+    Set existingIDs = CreateObject("Scripting.Dictionary")
+
+    Dim j As Long
+    For j = 1 To newTbl.ListRows.Count
+        Dim existingID As String
+        existingID = CStr(newTbl.ListRows(j).Range(1, idColumn).Value)
+        If existingID <> "" Then
+            existingIDs(existingID) = True
+        End If
+    Next j
+
+    ' Import rows from old table
+    Dim i As Long
+    For i = 1 To oldTbl.ListRows.Count
+        On Error Resume Next
+
+        ' Check if row is empty (skip seed rows)
+        Dim firstCell As Variant
+        firstCell = oldTbl.ListRows(i).Range(1, 1).Value
+        If IsEmpty(firstCell) Or firstCell = "" Then
+            GoTo NextRow
+        End If
+
+        ' Get original ID
+        Dim originalID As String
+        originalID = CStr(oldTbl.ListRows(i).Range(1, idColumn).Value)
+
+        ' Handle duplicate ID by generating new one with -IMP suffix
+        Dim finalID As String
+        finalID = originalID
+        Dim suffix As Integer
+        suffix = 1
+
+        While existingIDs.Exists(finalID)
+            If suffix = 1 Then
+                finalID = originalID & "-IMP"
+            Else
+                finalID = originalID & "-IMP" & suffix
+            End If
+            suffix = suffix + 1
+            duplicateCount = duplicateCount + 1
+        Wend
+
+        ' Add new ID to dictionary
+        existingIDs(finalID) = True
+
+        ' Get row to use (seed row if empty, otherwise new row)
+        Dim newRow As ListRow
+        If newTbl.ListRows.Count = 1 And _
+           (IsEmpty(newTbl.ListRows(1).Range(1, 1).Value) Or _
+            newTbl.ListRows(1).Range(1, 1).Value = "") Then
+            Set newRow = newTbl.ListRows(1)
+        Else
+            Set newRow = newTbl.ListRows.Add
+        End If
+
+        ' Copy all columns
+        Dim col As Integer
+        For col = 1 To columnCount
+            If col = idColumn Then
+                ' Use potentially renamed ID
+                newRow.Range(1, col).Value = finalID
+            Else
+                ' Copy value as-is
+                newRow.Range(1, col).Value = oldTbl.ListRows(i).Range(1, col).Value
+            End If
+        Next col
+
+        importedCount = importedCount + 1
+
+NextRow:
+        On Error GoTo ErrorHandler
+    Next i
+
+    ' Build result message
+    resultMsg = oldTableName & ": " & importedCount & " records"
+    If duplicateCount > 0 Then
+        resultMsg = resultMsg & " (" & duplicateCount & " IDs renamed)"
+    End If
+
+    ImportIndividualRecords = resultMsg
+    Exit Function
+
+ErrorHandler:
+    errorCount = errorCount + 1
+    resultMsg = oldTableName & ": " & importedCount & " records (" & errorCount & " errors)"
+    ImportIndividualRecords = resultMsg
+End Function
+
+'===================================================================
 ' DATA SAVE OPERATIONS
 '===================================================================
 
@@ -900,9 +1070,9 @@ Public Sub SaveAdmission(admDate As Variant, wardCode As String, _
     Dim targetRow As ListRow
     Set targetRow = GetOrAddTableRow(tbl)
 
-    ' Generate ID
+    ' Generate ID with "A" prefix for Admissions
     Dim newID As String
-    newID = GenerateNextID(tbl, "")
+    newID = GenerateNextID(tbl, "A")
 
     With targetRow.Range
         .Cells(1, COL_ADM_ID).Value = newID

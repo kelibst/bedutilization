@@ -22,51 +22,156 @@ Private Sub UserForm_Initialize()
     Next i
     If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
 
-    txtDate.Value = Format(Date, "dd/mm/yyyy")
+    txtDate.Value = modDateUtils.FormatDateDisplay(Date)
     txtAge.Value = ""
     txtPatientID.Value = ""
     txtPatientName.Value = ""
     optMale.Value = True
     optInsured.Value = True
+
+    ' Initialize date filter controls
+    On Error Resume Next
+    ' Handle both DTPicker and TextBox
+    If TypeName(Me.Controls("dtpFilterDate")) = "DTPicker" Then
+        dtpFilterDate.Value = Date
+    Else
+        dtpFilterDate.Value = Format(Date, "dd/mm/yyyy")
+    End If
+    On Error GoTo 0
+
     UpdateRecentList
 End Sub
 
-Private Sub UpdateRecentList()
+Private Sub UpdateRecentList(Optional filterDate As Variant)
+    On Error Resume Next
+    Application.ScreenUpdating = False
     lstRecent.Clear
+
     Dim tbl As ListObject
     Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
 
-    Dim startRow As Long
-    startRow = tbl.ListRows.Count - 9
-    If startRow < 1 Then startRow = 1
-
     Dim i As Long
-    For i = startRow To tbl.ListRows.Count
-        If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
-           tbl.ListRows(i).Range(1, 2).Value <> "" Then
-            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 2).Value, "dd/mm/yyyy") & " | " & _
-                tbl.ListRows(i).Range(1, 4).Value & " | " & _
-                tbl.ListRows(i).Range(1, 6).Value & " | Age: " & _
-                tbl.ListRows(i).Range(1, 7).Value
+    Dim displayCount As Integer
+    displayCount = 0
+
+    ' Check if filtering by date or showing all (last 10)
+    If Not IsMissing(filterDate) And Not IsEmpty(filterDate) Then
+        ' Filter mode: Show ALL entries matching the selected date
+        For i = 1 To tbl.ListRows.Count
+            If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
+               tbl.ListRows(i).Range(1, 2).Value <> "" Then
+                Dim entryDate As Date
+                entryDate = CDate(tbl.ListRows(i).Range(1, 2).Value)
+
+                If DateValue(entryDate) = DateValue(filterDate) Then
+                    lstRecent.AddItem Format(entryDate, "dd/mm/yyyy") & " | " & _
+                        tbl.ListRows(i).Range(1, 4).Value & " | " & _
+                        tbl.ListRows(i).Range(1, 6).Value & " | Age: " & _
+                        tbl.ListRows(i).Range(1, 7).Value
+                    displayCount = displayCount + 1
+                End If
+            End If
+        Next i
+        lblRecentStatus.Caption = displayCount & " entries on " & Format(filterDate, "dd/mm/yyyy")
+    Else
+        ' Default mode: Show last 10 entries
+        Dim startRow As Long
+        startRow = tbl.ListRows.Count - 9
+        If startRow < 1 Then startRow = 1
+
+        For i = startRow To tbl.ListRows.Count
+            If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
+               tbl.ListRows(i).Range(1, 2).Value <> "" Then
+                lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 2).Value, "dd/mm/yyyy") & " | " & _
+                    tbl.ListRows(i).Range(1, 4).Value & " | " & _
+                    tbl.ListRows(i).Range(1, 6).Value & " | Age: " & _
+                    tbl.ListRows(i).Range(1, 7).Value
+                displayCount = displayCount + 1
+            End If
+        Next i
+        lblRecentStatus.Caption = "Last " & displayCount & " entries"
+    End If
+
+    Application.ScreenUpdating = True
+End Sub
+
+' Event handler for "All Records" option
+Private Sub optAllRecords_Click()
+    On Error Resume Next
+    dtpFilterDate.Enabled = False
+    UpdateRecentList
+End Sub
+
+' Event handler for "Specific Date" option
+Private Sub optSpecificDate_Click()
+    On Error Resume Next
+    dtpFilterDate.Enabled = True
+    UpdateRecentList dtpFilterDate.Value
+End Sub
+
+' Event handler for date picker change
+Private Sub dtpFilterDate_Change()
+    On Error Resume Next
+    If optSpecificDate.Value = True Then
+        Dim filterVal As Variant
+        filterVal = dtpFilterDate.Value
+        If IsDate(filterVal) Or (VarType(filterVal) = vbString And Len(filterVal) > 0) Then
+            UpdateRecentList CDate(filterVal)
         End If
-    Next i
+    End If
 End Sub
 
 Private Sub lstRecent_Click()
     If lstRecent.ListIndex < 0 Then Exit Sub
 
+    On Error GoTo LoadError
+
+    ' Parse the selected item to extract admission date, ward, and patient name
+    Dim selectedItem As String
+    selectedItem = lstRecent.List(lstRecent.ListIndex)
+
+    ' Format: "dd/mm/yyyy | Ward | PatientName | Age: ##"
+    Dim datePart As String, wardPart As String, namePart As String
+    Dim firstPipe As Integer, secondPipe As Integer, thirdPipe As Integer
+    firstPipe = InStr(selectedItem, "|")
+    secondPipe = InStr(firstPipe + 1, selectedItem, "|")
+    thirdPipe = InStr(secondPipe + 1, selectedItem, "|")
+
+    datePart = Trim(Left(selectedItem, firstPipe - 1))
+    wardPart = Trim(Mid(selectedItem, firstPipe + 1, secondPipe - firstPipe - 1))
+    namePart = Trim(Mid(selectedItem, secondPipe + 1, thirdPipe - secondPipe - 1))
+
+    ' Find the matching row in the table by date, ward, and patient name
+    Dim entryDate As Date
+    entryDate = CDate(datePart)
+
     Dim tbl As ListObject
     Set tbl = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
 
-    ' Calculate actual row (last 10 entries)
-    Dim startRow As Long
-    startRow = tbl.ListRows.Count - 9
-    If startRow < 1 Then startRow = 1
-
     Dim actualRow As Long
-    actualRow = startRow + lstRecent.ListIndex
+    actualRow = 0
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) Then
+            Dim checkDate As Date
+            checkDate = CDate(tbl.ListRows(i).Range(1, 2).Value)
+            Dim checkWard As String
+            checkWard = tbl.ListRows(i).Range(1, 4).Value
+            Dim checkName As String
+            checkName = tbl.ListRows(i).Range(1, 6).Value
 
-    If actualRow > tbl.ListRows.Count Then Exit Sub
+            If DateValue(checkDate) = DateValue(entryDate) And _
+               checkWard = wardPart And checkName = namePart Then
+                actualRow = i
+                Exit For
+            End If
+        End If
+    Next i
+
+    If actualRow = 0 Then
+        MsgBox "Could not find the selected entry in the table.", vbExclamation
+        Exit Sub
+    End If
 
     ' Store the row we're editing
     editingRowIndex = actualRow
@@ -104,6 +209,10 @@ Private Sub lstRecent_Click()
     Else
         optNonInsured.Value = True
     End If
+    Exit Sub
+
+LoadError:
+    MsgBox "Error loading admission entry: " & Err.Description, vbCritical, "Load Error"
 End Sub
 
 Private Sub cmbWard_Change()
@@ -152,16 +261,21 @@ Private Function SaveAdmissionEntry() As Boolean
     End If
 
     Dim admDate As Variant
-    admDate = Trim(txtDate.Value)
-    
-    If Not IsDate(admDate) Then
-        MsgBox "Please enter a valid date (e.g., 14/02/2026).", vbExclamation
+    Dim errMsg As String
+
+    ' Parse and validate date using centralized date utils
+    admDate = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If IsEmpty(admDate) Then
+        MsgBox errMsg, vbExclamation, "Invalid Date"
         txtDate.SetFocus
         Exit Function
     End If
-    
-    ' Convert to real date to ensure consistency
-    admDate = CDate(admDate)
+
+    If Not modDateUtils.ValidateDate(admDate, errMsg) Then
+        MsgBox errMsg, vbExclamation, "Invalid Date"
+        txtDate.SetFocus
+        Exit Function
+    End If
 
     If Trim(txtAge.Value) = "" Or Not IsNumeric(txtAge.Value) Then
         MsgBox "Please enter a valid age.", vbExclamation
@@ -236,29 +350,12 @@ UpdateError:
     MsgBox "Error updating entry: " & Err.Description, vbCritical, "Update Error"
 End Sub
 
-Private Function ParseDateAdm(dateStr As String) As Date
-    On Error GoTo badDate
+' ParseDateAdm function removed - now using modDateUtils.ParseDate instead
 
-    ' Validate input
-    If Trim(dateStr) = "" Then
-        MsgBox "Date field is empty. Please enter a valid date.", vbExclamation, "Invalid Date"
-        ParseDateAdm = #1/1/1900#
-        Exit Function
-    End If
-
-    Dim parts() As String
-    parts = Split(dateStr, "/")
-    If UBound(parts) = 2 Then
-        ParseDateAdm = DateSerial(CLng(parts(2)), CLng(parts(1)), CLng(parts(0)))
-        Exit Function
-    End If
-
-    ParseDateAdm = CDate(dateStr)
-    Exit Function
-
-badDate:
-    MsgBox "Invalid date format: " & dateStr & vbCrLf & _
-           "Please use dd/mm/yyyy format (e.g., 13/02/2026)", _
-           vbExclamation, "Invalid Date"
-    ParseDateAdm = #1/1/1900#
-End Function
+'==============================================================================
+' Calendar Picker Button Click Handler
+'==============================================================================
+Private Sub txtDate_picker_Click()
+    ' Show calendar picker and update date field
+    modDateUtils.ShowDatePicker txtDate
+End Sub

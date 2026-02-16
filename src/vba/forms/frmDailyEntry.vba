@@ -51,63 +51,162 @@ Private Sub UserForm_Initialize()
     txtTransOut.Value = "0"
 
     isLoading = False
+
+    ' Initialize date filter controls
+    On Error Resume Next
+    ' Handle both DTPicker and TextBox
+    If TypeName(Me.Controls("dtpFilterDate")) = "DTPicker" Then
+        dtpFilterDate.Value = Date  ' Set to today
+    Else
+        dtpFilterDate.Value = Format(Date, "dd/mm/yyyy")  ' TextBox format
+    End If
+    On Error GoTo 0
+
     UpdatePrevRemaining
     CheckExistingEntry
     UpdateRecentList
 End Sub
 
-Private Sub UpdateRecentList()
+Private Sub UpdateRecentList(Optional filterDate As Variant)
+    On Error Resume Next
+    Application.ScreenUpdating = False
     lstRecent.Clear
+
     Dim tbl As ListObject
     Set tbl = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
 
-    Dim startRow As Long
-    startRow = tbl.ListRows.Count - 9
-    If startRow < 1 Then startRow = 1
-
     Dim i As Long
-    For i = startRow To tbl.ListRows.Count
-        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
-           tbl.ListRows(i).Range(1, 1).Value <> "" Then
-            lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
-                tbl.ListRows(i).Range(1, 2).Value & " | " & _
-                "Adm:" & tbl.ListRows(i).Range(1, 4).Value & _
-                " Dis:" & tbl.ListRows(i).Range(1, 5).Value & _
-                " Rem:" & tbl.ListRows(i).Range(1, 11).Value
+    Dim displayCount As Integer
+    displayCount = 0
+
+    ' Check if filtering by date or showing all (last 10)
+    If Not IsMissing(filterDate) And Not IsEmpty(filterDate) Then
+        ' Filter mode: Show ALL entries matching the selected date
+        For i = 1 To tbl.ListRows.Count
+            If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
+               tbl.ListRows(i).Range(1, 1).Value <> "" Then
+                Dim entryDate As Date
+                entryDate = CDate(tbl.ListRows(i).Range(1, 1).Value)
+
+                If DateValue(entryDate) = DateValue(filterDate) Then
+                    lstRecent.AddItem Format(entryDate, "dd/mm/yyyy") & " | " & _
+                        tbl.ListRows(i).Range(1, 3).Value & " | " & _
+                        "Adm:" & tbl.ListRows(i).Range(1, 4).Value & _
+                        " Dis:" & tbl.ListRows(i).Range(1, 5).Value & _
+                        " Rem:" & tbl.ListRows(i).Range(1, 11).Value
+                    displayCount = displayCount + 1
+                End If
+            End If
+        Next i
+        lblRecentStatus.Caption = displayCount & " entries on " & Format(filterDate, "dd/mm/yyyy")
+    Else
+        ' Default mode: Show last 10 entries
+        Dim startRow As Long
+        startRow = tbl.ListRows.Count - 9
+        If startRow < 1 Then startRow = 1
+
+        For i = startRow To tbl.ListRows.Count
+            If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) And _
+               tbl.ListRows(i).Range(1, 1).Value <> "" Then
+                lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 1).Value, "dd/mm/yyyy") & " | " & _
+                    tbl.ListRows(i).Range(1, 3).Value & " | " & _
+                    "Adm:" & tbl.ListRows(i).Range(1, 4).Value & _
+                    " Dis:" & tbl.ListRows(i).Range(1, 5).Value & _
+                    " Rem:" & tbl.ListRows(i).Range(1, 11).Value
+                displayCount = displayCount + 1
+            End If
+        Next i
+        lblRecentStatus.Caption = "Last " & displayCount & " entries"
+    End If
+
+    Application.ScreenUpdating = True
+End Sub
+
+' Event handler for "All Records" option
+Private Sub optAllRecords_Click()
+    On Error Resume Next
+    dtpFilterDate.Enabled = False
+    UpdateRecentList
+End Sub
+
+' Event handler for "Specific Date" option
+Private Sub optSpecificDate_Click()
+    On Error Resume Next
+    dtpFilterDate.Enabled = True
+    UpdateRecentList dtpFilterDate.Value
+End Sub
+
+' Event handler for date picker change
+Private Sub dtpFilterDate_Change()
+    On Error Resume Next
+    If optSpecificDate.Value = True Then
+        ' Handle both DTPicker (returns Date) and TextBox (returns String)
+        Dim filterVal As Variant
+        filterVal = dtpFilterDate.Value
+        If IsDate(filterVal) Or (VarType(filterVal) = vbString And Len(filterVal) > 0) Then
+            UpdateRecentList CDate(filterVal)
         End If
-    Next i
+    End If
 End Sub
 
 Private Sub lstRecent_Click()
     If lstRecent.ListIndex < 0 Then Exit Sub
 
+    On Error GoTo DateError
+    isLoading = True ' Prevent change events while loading
+
+    ' Parse the selected item to extract date and ward
+    Dim selectedItem As String
+    selectedItem = lstRecent.List(lstRecent.ListIndex)
+
+    ' Extract date (format: "dd/mm/yyyy | WardCode | ...")
+    Dim datePart As String
+    datePart = Left(selectedItem, InStr(selectedItem, "|") - 2)
+
+    ' Extract ward code (between first and second |)
+    Dim firstPipe As Integer, secondPipe As Integer
+    firstPipe = InStr(selectedItem, "|")
+    secondPipe = InStr(firstPipe + 1, selectedItem, "|")
+    Dim wardPart As String
+    wardPart = Trim(Mid(selectedItem, firstPipe + 1, secondPipe - firstPipe - 1))
+
+    ' Find the matching row in the table by date and ward
+    Dim entryDate As Date
+    entryDate = CDate(datePart)
+
     Dim tbl As ListObject
     Set tbl = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
 
-    ' Calculate actual row (last 10 entries)
-    Dim startRow As Long
-    startRow = tbl.ListRows.Count - 9
-    If startRow < 1 Then startRow = 1
-
     Dim actualRow As Long
-    actualRow = startRow + lstRecent.ListIndex
+    actualRow = 0
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        If Not IsEmpty(tbl.ListRows(i).Range(1, 1).Value) Then
+            Dim checkDate As Date
+            checkDate = CDate(tbl.ListRows(i).Range(1, 1).Value)
+            Dim checkWard As String
+            checkWard = tbl.ListRows(i).Range(1, 3).Value
 
-    If actualRow > tbl.ListRows.Count Then Exit Sub
+            If DateValue(checkDate) = DateValue(entryDate) And checkWard = wardPart Then
+                actualRow = i
+                Exit For
+            End If
+        End If
+    Next i
 
-    isLoading = True ' Prevent change events while loading
-    On Error GoTo DateError
-
-    ' Load the selected entry
-    Dim entryDate As Date
-    entryDate = CDate(tbl.ListRows(actualRow).Range(1, 1).Value)
+    If actualRow = 0 Then
+        isLoading = False
+        MsgBox "Could not find the selected entry in the table.", vbExclamation
+        Exit Sub
+    End If
 
     cmbMonth.ListIndex = Month(entryDate) - 1
     spnDay.Value = Day(entryDate)
     txtDay.Value = CStr(Day(entryDate))
 
-    ' Load ward
+    ' Load ward (column 3 is WardCode)
     Dim wc As String
-    wc = tbl.ListRows(actualRow).Range(1, 2).Value
+    wc = tbl.ListRows(actualRow).Range(1, 3).Value
     Dim j As Long
     For j = 0 To UBound(wardCodes)
         If wardCodes(j) = wc Then
