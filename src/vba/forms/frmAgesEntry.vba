@@ -138,15 +138,15 @@ Private Sub UpdateValidationDisplay()
     Dim validationMsg As String
 
     If ValidateAdmissionCount(CDate(checkDate), wc, dailyTotal, individualCount, validationMsg) Then
-        lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [OK]"
-        lblValidation.ForeColor = RGB(0, 128, 0)  ' Green
+        Me.Controls("lblValidation").Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [OK]"
+        Me.Controls("lblValidation").ForeColor = RGB(0, 128, 0)  ' Green
     Else
         If dailyTotal = 0 And InStr(validationMsg, "No daily bed-state") > 0 Then
-            lblValidation.Caption = "Daily Total: Not entered yet"
-            lblValidation.ForeColor = RGB(128, 128, 128)  ' Gray
+            Me.Controls("lblValidation").Caption = "Daily Total: Not entered yet"
+            Me.Controls("lblValidation").ForeColor = RGB(128, 128, 128)  ' Gray
         Else
-            lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [MISMATCH]"
-            lblValidation.ForeColor = RGB(255, 0, 0)  ' Red
+            Me.Controls("lblValidation").Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [MISMATCH]"
+            Me.Controls("lblValidation").ForeColor = RGB(255, 0, 0)  ' Red
         End If
     End If
 End Sub
@@ -413,6 +413,37 @@ End Sub
 Private Sub btnClose_Click()
     editingRowIndex = 0  ' Clear edit mode
     Unload Me
+End Sub
+
+'==============================================================================
+' Enter key handlers - save from any input control
+'==============================================================================
+Private Sub txtAge_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = 13 Then
+        KeyCode = 0
+        btnSave_Click
+    End If
+End Sub
+
+Private Sub cmbAgeUnit_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = 13 Then
+        KeyCode = 0
+        btnSave_Click
+    End If
+End Sub
+
+Private Sub cmbWard_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = 13 Then
+        KeyCode = 0
+        btnSave_Click
+    End If
+End Sub
+
+Private Sub txtDate_KeyDown(ByVal KeyCode As MSForms.ReturnInteger, ByVal Shift As Integer)
+    If KeyCode = 13 Then
+        KeyCode = 0
+        btnSave_Click
+    End If
 End Sub
 
 '==============================================================================
