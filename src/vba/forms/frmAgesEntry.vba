@@ -41,7 +41,6 @@ Private Sub UserForm_Initialize()
     End If
     On Error GoTo 0
 
-    UpdateRecentList
     txtAge.SetFocus
 End Sub
 
@@ -206,7 +205,7 @@ Private Sub lstRecent_Click()
 
     ' Load ward
     Dim wc As String
-    wc = tbl.ListRows(actualRow).Range(1, 6).Value
+    wc = tbl.ListRows(actualRow).Range(1, COL_ADM_WARD_CODE).Value
     Dim j As Long
     For j = 0 To UBound(wardCodes)
         If wardCodes(j) = wc Then
@@ -310,7 +309,8 @@ Private Sub btnSave_Click()
     cmbAgeUnit.ListIndex = 0 ' Reset to Years
     ' Keep persistent selections (Ward, Date, Sex, NHIS)
 
-    UpdateRecentList
+    UpdateRecentList dt
+    UpdateAdmissionTotals CDate(dt)
     txtAge.SetFocus
     Exit Sub
 
@@ -343,7 +343,7 @@ Private Sub UpdateAgesRow(rowIndex As Long, admDate As Variant, wardCode As Stri
         End If
         .Cells(1, COL_ADM_WARD_CODE).Value = wardCode
         .Cells(1, COL_ADM_PATIENT_ID).Value = patientID
-        .Cells(1, COL_ADM_PATIENT_NAME).Value = "Age Entry"  ' Ages entry uses this for patient name
+        .Cells(1, COL_ADM_PATIENT_NAME).Value = ""            ' Keep blank, consistent with SaveAdmission
         .Cells(1, COL_ADM_AGE).Value = age
         .Cells(1, COL_ADM_AGE_UNIT).Value = ageUnit
         .Cells(1, COL_ADM_SEX).Value = sex
@@ -352,7 +352,8 @@ Private Sub UpdateAgesRow(rowIndex As Long, admDate As Variant, wardCode As Stri
         .Cells(1, COL_ADM_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
 
-    UpdateRecentList
+    UpdateRecentList CDate(admDate)
+    UpdateAdmissionTotals CDate(admDate)
     Exit Sub
 
 UpdateError:
@@ -370,4 +371,172 @@ End Sub
 Private Sub txtDate_picker_Click()
     ' Show calendar picker and update date field
     modDateUtils.ShowDatePicker txtDate
+End Sub
+
+'==============================================================================
+' Date Auto-Filter: when entry date changes, filter list and refresh totals
+'==============================================================================
+Private Sub txtDate_Change()
+    On Error Resume Next
+    Dim dt As Variant
+    Dim errMsg As String
+    dt = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If Not IsEmpty(dt) Then
+        If modDateUtils.ValidateDate(dt, errMsg) Then
+            Dim filterDate As Date
+            filterDate = CDate(dt)
+            UpdateRecentList filterDate
+            UpdateAdmissionTotals filterDate
+        End If
+    End If
+End Sub
+
+'==============================================================================
+' Show age entry count vs daily admission record for the given date
+'==============================================================================
+Private Sub UpdateAdmissionTotals(filterDate As Date)
+    On Error Resume Next
+
+    Dim tblAdm As ListObject
+    Set tblAdm = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+
+    Dim tblDay As ListObject
+    Set tblDay = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
+
+    ' Count age entries for this date across all wards
+    Dim ageEntries As Long
+    ageEntries = 0
+    Dim i As Long
+    For i = 1 To tblAdm.ListRows.Count
+        If Not IsEmpty(tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value) Then
+            If IsDate(tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value) Then
+                If DateValue(CDate(tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value)) = DateValue(filterDate) Then
+                    ageEntries = ageEntries + 1
+                End If
+            End If
+        End If
+    Next i
+
+    ' Sum daily admission totals for this date across all wards
+    Dim dailyTotal As Long
+    dailyTotal = 0
+    For i = 1 To tblDay.ListRows.Count
+        If Not IsEmpty(tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value) Then
+            If IsDate(tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value) Then
+                If DateValue(CDate(tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value)) = DateValue(filterDate) Then
+                    dailyTotal = dailyTotal + CLng(Val(tblDay.ListRows(i).Range(1, COL_DAILY_ADMISSIONS).Value))
+                End If
+            End If
+        End If
+    Next i
+
+    lblAdmTotal.Caption = Format(filterDate, "dd/mm/yyyy") & "  —  Entries: " & ageEntries & "  |  Daily record: " & dailyTotal
+
+    If ageEntries > 0 And ageEntries = dailyTotal Then
+        lblAdmTotal.ForeColor = RGB(0, 128, 0)    ' Green: match
+    ElseIf dailyTotal > 0 And ageEntries <> dailyTotal Then
+        lblAdmTotal.ForeColor = RGB(200, 0, 0)    ' Red: mismatch
+    Else
+        lblAdmTotal.ForeColor = RGB(128, 128, 128) ' Gray: no daily record yet
+    End If
+End Sub
+
+'==============================================================================
+' Validate: compare age entry counts vs daily admission records per ward
+'==============================================================================
+Private Sub btnValidate_Click()
+    Dim dt As Variant
+    Dim errMsg As String
+    dt = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If IsEmpty(dt) Then
+        MsgBox "Enter a valid date first.", vbExclamation, "Date Required"
+        txtDate.SetFocus
+        Exit Sub
+    End If
+
+    Dim filterDate As Date
+    filterDate = CDate(dt)
+
+    Dim tblAdm As ListObject
+    Dim tblDay As ListObject
+    Set tblAdm = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
+    Set tblDay = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
+
+    Dim wards() As String
+    wards = GetWardCodes()
+
+    Dim report As String
+    Dim issueCount As Long
+    Dim hasAnyData As Boolean
+    issueCount = 0
+    hasAnyData = False
+
+    report = "Age Entry Validation  —  " & Format(filterDate, "dd/mm/yyyy") & vbCrLf
+    report = report & String(50, "-") & vbCrLf
+
+    Dim w As Long
+    For w = 0 To UBound(wards)
+        Dim wc As String
+        wc = wards(w)
+
+        ' Count age entries for this ward + date
+        Dim ageCount As Long
+        ageCount = 0
+        Dim i As Long
+        For i = 1 To tblAdm.ListRows.Count
+            If Not IsEmpty(tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value) Then
+                If IsDate(tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value) Then
+                    If DateValue(CDate(tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value)) = DateValue(filterDate) And _
+                       tblAdm.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value = wc Then
+                        ageCount = ageCount + 1
+                    End If
+                End If
+            End If
+        Next i
+
+        ' Look up daily record for this ward + date
+        Dim dailyAdm As Long
+        Dim hasDailyRecord As Boolean
+        dailyAdm = 0
+        hasDailyRecord = False
+        For i = 1 To tblDay.ListRows.Count
+            If Not IsEmpty(tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value) Then
+                If IsDate(tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value) Then
+                    If DateValue(CDate(tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value)) = DateValue(filterDate) And _
+                       tblDay.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value = wc Then
+                        dailyAdm = CLng(Val(tblDay.ListRows(i).Range(1, COL_DAILY_ADMISSIONS).Value))
+                        hasDailyRecord = True
+                        Exit For
+                    End If
+                End If
+            End If
+        Next i
+
+        ' Only include wards with any activity on this date
+        If hasDailyRecord Or ageCount > 0 Then
+            hasAnyData = True
+            If ageCount = dailyAdm Then
+                report = report & "  [OK] " & wc & ": " & ageCount & " entries = " & dailyAdm & " admitted" & vbCrLf
+            Else
+                report = report & "  [!!] " & wc & ": " & ageCount & " entries <> " & dailyAdm & " admitted" & vbCrLf
+                issueCount = issueCount + 1
+            End If
+        End If
+    Next w
+
+    report = report & String(50, "-") & vbCrLf
+
+    If Not hasAnyData Then
+        MsgBox "No data found for " & Format(filterDate, "dd/mm/yyyy") & "." & vbCrLf & _
+               "Ensure both age entries and daily records exist for this date.", _
+               vbInformation, "No Data"
+        Exit Sub
+    End If
+
+    If issueCount = 0 Then
+        MsgBox report & "All records match!", vbInformation, "Validation Passed"
+    Else
+        MsgBox report & issueCount & " ward(s) have inconsistencies. Please verify.", _
+               vbExclamation, "Validation Issues Found"
+    End If
 End Sub
