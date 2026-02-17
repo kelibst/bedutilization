@@ -28,12 +28,13 @@ and ages entried data. kindly verify if it does. if not make sure it does. also 
 it shows the entries for a specific entry date and not the last one entered. let's plan this carefully first
 
 awesome, now for backward compatibility with facilities that do not have have an initial version of the workbook and therefore cannot import from the 
-workbook. i have in mind a plan that is they copy what they already in excel sheed as just the data. that is if it is the ward. state then 
+workbook. i have in mind a plan that is they copy what they already in excel sheed as just the data. that is if it is the ward state. so do you understand what i mean?
 
-✅ DONE - Implemented admission validation system
-   - Real-time validation in frmAdmission and frmAgesEntry shows daily total vs individual count
-   - Color-coded display: Green (match), Red (mismatch), Gray (no daily entry yet)
-   - Created frmValidateWard for monthly ward validation reports
-   - Monthly validation identifies specific days with mismatches
-   - See VALIDATION_IMPLEMENTATION_GUIDE.md for integration and testing instructions
-   - Code complete - needs UI controls added to forms (lblValidation labels)
+Currently the admission entry does not add the patient name, and the patient number. it skips them during saving. the 
+age entry form is a quicker version of the admission entry, so the name of the patient is ignored if the user chooses to enter the age.
+not replaced with age entry text. so help fix those errors.
+
+I need some few validations for the age entry form. 
+1. let the filter by date, by default filter by the date the user selects. that is you set the state to automatically update to the date the user selects.
+or enters. show the total admissions for the selected date and we will add validate button that will validate compare each entry with every day admission from the sheet for each day
+and outline places of inconsistencies for the user to verify.

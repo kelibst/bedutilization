@@ -351,7 +351,7 @@ def create_ages_entry_form(vbproj: Any) -> None:
 
     # Recent entries header + Validate button on same row
     add_label(d, "lblRecent", "Recent Age Entries:", 12, y, 160, 18)
-    add_button(d, "btnValidate", "Validate Date", 198, y, 110, 20)
+    add_button(d, "btnValidate", "Validate Month", 198, y, 110, 20)
     y += 22
     lst = d.Controls.Add("Forms.ListBox.1")
     lst.Name = "lstRecent"
