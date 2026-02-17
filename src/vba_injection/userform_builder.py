@@ -291,7 +291,7 @@ def create_ages_entry_form(vbproj: Any) -> None:
     form.Name = "frmAgesEntry"
     form.Properties("Caption").Value = "Speed Ages Entry"
     form.Properties("Width").Value = 350
-    form.Properties("Height").Value = 520
+    form.Properties("Height").Value = 560
 
     d = form.Designer
     y = 12
@@ -344,9 +344,15 @@ def create_ages_entry_form(vbproj: Any) -> None:
     # Date filter controls
     y = add_date_filter_controls(d, y, 310)
 
-    # Recent entries list
-    add_label(d, "lblRecent", "Recent Age Entries:", 12, y, 150, 18)
-    y += 20
+    # Totals summary (auto-updated when entry date changes)
+    lbl = add_label(d, "lblAdmTotal", "Enter a date above to see totals", 12, y, 310, 18)
+    lbl.ForeColor = 0x808080  # Gray
+    y += 24
+
+    # Recent entries header + Validate button on same row
+    add_label(d, "lblRecent", "Recent Age Entries:", 12, y, 160, 18)
+    add_button(d, "btnValidate", "Validate Date", 198, y, 110, 20)
+    y += 22
     lst = d.Controls.Add("Forms.ListBox.1")
     lst.Name = "lstRecent"
     lst.Left = 12
