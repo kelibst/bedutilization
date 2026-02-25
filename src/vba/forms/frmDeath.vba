@@ -213,10 +213,10 @@ Private Sub lstRecent_Click()
     End If
 
     ' Load within 24 hours flag
-    chkWithin24.Value = (tbl.ListRows(actualRow).Range(1, 11).Value = True)
+    chkWithin24.Value = (tbl.ListRows(actualRow).Range(1, COL_DEATH_WITHIN_24HR).Value = True)
 
     ' Load cause
-    cmbCause.Value = tbl.ListRows(actualRow).Range(1, 10).Value
+    cmbCause.Value = tbl.ListRows(actualRow).Range(1, COL_DEATH_CAUSE).Value
 
     lblStatus.Caption = "Loaded entry for editing"
     Exit Sub
@@ -236,7 +236,7 @@ Private Sub PopulateCauses()
     Dim i As Long
     For i = 1 To tbl.ListRows.Count
         Dim c As String
-        c = Trim(CStr(tbl.ListRows(i).Range(1, 11).Value))
+        c = Trim(CStr(tbl.ListRows(i).Range(1, COL_DEATH_CAUSE).Value))
         If c <> "" And c <> "0" Then
             If Not causes.Exists(c) Then
                 causes.Add c, True

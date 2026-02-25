@@ -10,70 +10,20 @@ Option Explicit
 '===================================================================
 
 Public Sub RefreshDeathsReport()
+    ' Deaths Summary is now formula-driven and updates automatically
+    ' This function forces recalculation if needed
+    On Error Resume Next
     Application.ScreenUpdating = False
-    On Error GoTo cleanup
 
     Dim wsReport As Worksheet
-    Set wsReport = ThisWorkbook.Sheets("Deaths Report")
-    Dim tbl As ListObject
-    Set tbl = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
+    Set wsReport = ThisWorkbook.Sheets("Deaths Summary")
 
-    ' Clear old data (keep headers)
-    Dim monthStartRows(1 To 12) As Long
-    Dim headerRows(1 To 12) As Long
-    Dim r As Long
-    r = 1
-    Dim m As Long
-    For m = 1 To 12
-        monthStartRows(m) = r
-        headerRows(m) = r + 1
-        ' Clear data rows (rows 3 to 42 of each section = 40 rows)
-        Dim dataStart As Long
-        dataStart = r + 2
-        wsReport.Range(wsReport.Cells(dataStart, 1), wsReport.Cells(dataStart + 39, 8)).ClearContents
-        r = r + 42
-    Next m
-
-    ' Check if table has real data
-    If tbl.ListRows.Count <= 1 Then
-        If IsEmpty(tbl.ListRows(1).Range(1, 1).Value) Or tbl.ListRows(1).Range(1, 1).Value = "" Then
-            GoTo cleanup
-        End If
+    If Not wsReport Is Nothing Then
+        wsReport.Calculate
     End If
 
-    ' Populate from tblDeaths
-    Dim sn(1 To 12) As Long
-    For m = 1 To 12
-        sn(m) = 0
-    Next m
-
-    Dim i As Long
-    For i = 1 To tbl.ListRows.Count
-        Dim rowMonth As Variant
-        rowMonth = tbl.ListRows(i).Range(1, 3).Value
-        If Not IsEmpty(rowMonth) And IsNumeric(rowMonth) Then
-            m = CLng(rowMonth)
-            If m >= 1 And m <= 12 Then
-                sn(m) = sn(m) + 1
-                Dim writeRow As Long
-                writeRow = monthStartRows(m) + 1 + sn(m)
-                If sn(m) <= 40 Then
-                    wsReport.Cells(writeRow, 1).Value = sn(m)
-                    wsReport.Cells(writeRow, 2).Value = tbl.ListRows(i).Range(1, 5).Value  ' FolderNumber
-                    wsReport.Cells(writeRow, 3).Value = tbl.ListRows(i).Range(1, 2).Value  ' DateOfDeath
-                    wsReport.Cells(writeRow, 3).NumberFormat = "dd/mm/yyyy"
-                    wsReport.Cells(writeRow, 4).Value = tbl.ListRows(i).Range(1, 6).Value  ' Name
-                    wsReport.Cells(writeRow, 5).Value = tbl.ListRows(i).Range(1, 7).Value  ' Age
-                    wsReport.Cells(writeRow, 6).Value = tbl.ListRows(i).Range(1, 9).Value  ' Sex
-                    wsReport.Cells(writeRow, 7).Value = tbl.ListRows(i).Range(1, 4).Value  ' Ward
-                    wsReport.Cells(writeRow, 8).Value = tbl.ListRows(i).Range(1, 10).Value ' NHIS
-                End If
-            End If
-        End If
-    Next i
-
-cleanup:
     Application.ScreenUpdating = True
+    MsgBox "Deaths Summary updated (formula-driven report)", vbInformation
 End Sub
 
 Public Sub RefreshCODSummary()

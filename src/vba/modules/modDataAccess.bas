@@ -44,11 +44,11 @@ Public Const COL_DEATH_WARD_CODE As Integer = 4
 Public Const COL_DEATH_FOLDER_NUM As Integer = 5
 Public Const COL_DEATH_NAME As Integer = 6
 Public Const COL_DEATH_AGE As Integer = 7
-Public Const COL_DEATH_SEX As Integer = 8
-Public Const COL_DEATH_NHIS As Integer = 9
-Public Const COL_DEATH_CAUSE As Integer = 10
-Public Const COL_DEATH_WITHIN_24HR As Integer = 11
-Public Const COL_DEATH_AGE_UNIT As Integer = 12
+Public Const COL_DEATH_AGE_UNIT As Integer = 8    ' Moved from 12 to align with table structure
+Public Const COL_DEATH_SEX As Integer = 9         ' Moved from 8
+Public Const COL_DEATH_NHIS As Integer = 10       ' Moved from 9
+Public Const COL_DEATH_CAUSE As Integer = 11      ' Moved from 10
+Public Const COL_DEATH_WITHIN_24HR As Integer = 12 ' Moved from 11
 Public Const COL_DEATH_TIMESTAMP As Integer = 13
 
 '===================================================================
