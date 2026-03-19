@@ -1236,45 +1236,131 @@ def build_ages_summary_sheet(wb: Workbook, config: WorkbookConfig):
 # DEATHS REPORT SHEET (VBA-refreshed, but we set up the structure)
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_deaths_report_sheet(wb: Workbook, config: WorkbookConfig):
-    ws = wb.create_sheet("Deaths Report")
+def build_deaths_summary_sheet(wb: Workbook, config: WorkbookConfig):
+    """Creates an age group summary for deaths, matching Ages Summary format"""
+    ws = wb.create_sheet("Deaths Summary")
     ws.sheet_properties.tabColor = "C00000"
 
-    # Create 12 month sections with headers
-    current_row = 1
-    for month_num in range(1, 13):
-        month_name = config.MONTH_NAMES[month_num - 1]
+    # Layout: 12 horizontal sections (one per month), each occupying 7 columns
+    # For each month section:
+    # Row 1: Month name
+    # Row 2: Category headers (both ins and non ins | NON INS | INS)
+    # Row 3: Male | Female subheaders
+    # Row 4-15: Age group data with COUNTIFS formulas
+    # Row 16: Total
 
-        ws.merge_cells(start_row=current_row, start_column=1,
-                       end_row=current_row, end_column=8)
-        c = ws.cell(row=current_row, column=1,
-                    value=f"DEATHS FOR {month_name}")
+    SECTION_WIDTH = 7  # columns per month section (age_label + 6 data cols)
+
+    # Row 1: Month headers
+    for m in range(1, 13):
+        start_col = 1 + (m - 1) * SECTION_WIDTH
+        ws.merge_cells(start_row=1, start_column=start_col,
+                       end_row=1, end_column=start_col + SECTION_WIDTH - 1)
+        c = ws.cell(row=1, column=start_col, value=config.MONTH_NAMES[m - 1])
         c.font = SUBHEADER_FONT
         c.alignment = CENTER
-        current_row += 1
+        c.fill = HEADER_FILL
+        c.font = HEADER_FONT_WHITE
 
-        headers = ["S/N", "Folder Number", "Date of Death",
-                   "Name of Deceased", "Age", "Sex", "Ward", "NHIS"]
-        for col, h in enumerate(headers, 1):
-            c = ws.cell(row=current_row, column=col, value=h)
-            c.font = HEADER_FONT_WHITE
-            c.fill = HEADER_FILL
+    # Row 2: Category headers
+    for m in range(1, 13):
+        sc = 1 + (m - 1) * SECTION_WIDTH
+        # Col 0: blank (age group label)
+        # Cols 1-2: "both ins and non ins" Male/Female
+        ws.merge_cells(start_row=2, start_column=sc + 1, end_row=2, end_column=sc + 2)
+        c = ws.cell(row=2, column=sc + 1, value="both ins and non ins")
+        c.font = LABEL_FONT
+        c.alignment = CENTER
+        c.fill = LIGHT_BLUE_FILL
+
+        # Cols 3-4: "NON INS" Male/Female
+        ws.merge_cells(start_row=2, start_column=sc + 3, end_row=2, end_column=sc + 4)
+        c = ws.cell(row=2, column=sc + 3, value="NON INS")
+        c.font = LABEL_FONT
+        c.alignment = CENTER
+        c.fill = PatternFill(start_color="FCE4EC", end_color="FCE4EC", fill_type="solid")
+
+        # Cols 5-6: "INS"
+        ws.merge_cells(start_row=2, start_column=sc + 5, end_row=2, end_column=sc + 6)
+        c = ws.cell(row=2, column=sc + 5, value="INS")
+        c.font = LABEL_FONT
+        c.alignment = CENTER
+        c.fill = LIGHT_GREEN_FILL
+
+    # Row 3: Male/Female subheaders
+    for m in range(1, 13):
+        sc = 1 + (m - 1) * SECTION_WIDTH
+        ws.cell(row=3, column=sc, value="Age Group").font = BOLD_FONT
+        ws.cell(row=3, column=sc).alignment = CENTER
+        ws.cell(row=3, column=sc).border = THIN_BORDER
+        for offset, label in [(1, "Male"), (2, "FEMALE"),
+                               (3, "MALE"), (4, "FRMALE"),
+                               (5, "MALE"), (6, "FRMALE")]:
+            c = ws.cell(row=3, column=sc + offset, value=label)
+            c.font = BOLD_FONT
             c.alignment = CENTER
             c.border = THIN_BORDER
-        current_row += 1
 
-        # Leave space for data (VBA will populate this)
-        # Reserve 40 rows per month
-        current_row += 40
+    # Rows 4-15: Age group data with COUNTIFS formulas
+    for m in range(1, 13):
+        sc = 1 + (m - 1) * SECTION_WIDTH
 
-    ws.column_dimensions["A"].width = 6
-    ws.column_dimensions["B"].width = 16
-    ws.column_dimensions["C"].width = 14
-    ws.column_dimensions["D"].width = 30
-    ws.column_dimensions["E"].width = 8
-    ws.column_dimensions["F"].width = 6
-    ws.column_dimensions["G"].width = 10
-    ws.column_dimensions["H"].width = 10
+        for ag_idx, (ag_label, age_unit, age_min, age_max) in enumerate(config.AGE_GROUPS):
+            r = 4 + ag_idx
+            ws.cell(row=r, column=sc, value=ag_label).font = NORMAL_FONT
+            ws.cell(row=r, column=sc).alignment = CENTER
+            ws.cell(row=r, column=sc).border = THIN_BORDER
+
+            # Build COUNTIFS for deaths
+            base = (
+                f'COUNTIFS(tblDeaths[Month],{m},'
+                f'tblDeaths[AgeUnit],"{age_unit}",'
+                f'tblDeaths[Age],">="&{age_min},'
+                f'tblDeaths[Age],"<="&{age_max},'
+            )
+            # Total Male
+            ws.cell(row=r, column=sc + 1,
+                    value=f'={base}tblDeaths[Sex],"M")').font = NORMAL_FONT
+            # Total Female
+            ws.cell(row=r, column=sc + 2,
+                    value=f'={base}tblDeaths[Sex],"F")').font = NORMAL_FONT
+            # Non-Insured Male
+            ws.cell(row=r, column=sc + 3,
+                    value=f'={base}tblDeaths[Sex],"M",tblDeaths[NHIS],"Non-Insured")').font = NORMAL_FONT
+            # Non-Insured Female
+            ws.cell(row=r, column=sc + 4,
+                    value=f'={base}tblDeaths[Sex],"F",tblDeaths[NHIS],"Non-Insured")').font = NORMAL_FONT
+            # Insured Male
+            ws.cell(row=r, column=sc + 5,
+                    value=f'={base}tblDeaths[Sex],"M",tblDeaths[NHIS],"Insured")').font = NORMAL_FONT
+            # Insured Female
+            ws.cell(row=r, column=sc + 6,
+                    value=f'={base}tblDeaths[Sex],"F",tblDeaths[NHIS],"Insured")').font = NORMAL_FONT
+
+            for col_off in range(1, 7):
+                ws.cell(row=r, column=sc + col_off).alignment = CENTER
+                ws.cell(row=r, column=sc + col_off).border = THIN_BORDER
+
+        # Total row
+        total_row = 4 + len(config.AGE_GROUPS)
+        ws.cell(row=total_row, column=sc, value="Total").font = BOLD_FONT
+        ws.cell(row=total_row, column=sc).alignment = CENTER
+        ws.cell(row=total_row, column=sc).fill = TOTAL_FILL
+        ws.cell(row=total_row, column=sc).border = THIN_BORDER
+        for col_off in range(1, 7):
+            cl = get_column_letter(sc + col_off)
+            ws.cell(row=total_row, column=sc + col_off,
+                    value=f'=SUM({cl}4:{cl}{total_row - 1})').font = BOLD_FONT
+            ws.cell(row=total_row, column=sc + col_off).alignment = CENTER
+            ws.cell(row=total_row, column=sc + col_off).fill = TOTAL_FILL
+            ws.cell(row=total_row, column=sc + col_off).border = THIN_BORDER
+
+    # Set column widths
+    for m in range(1, 13):
+        sc = 1 + (m - 1) * SECTION_WIDTH
+        ws.column_dimensions[get_column_letter(sc)].width = 8
+        for off in range(1, 7):
+            ws.column_dimensions[get_column_letter(sc + off)].width = 10
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -1471,8 +1557,8 @@ def build_structure(config: WorkbookConfig, output_path: str):
     # 5. Ages Summary
     build_ages_summary_sheet(wb, config)
 
-    # 6. Deaths Report
-    build_deaths_report_sheet(wb, config)
+    # 6. Deaths Summary (age-grouped, formula-driven)
+    build_deaths_summary_sheet(wb, config)
 
     # 7. COD Summary
     build_cod_summary_sheet(wb, config)
