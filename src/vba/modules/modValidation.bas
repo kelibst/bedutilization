@@ -156,7 +156,7 @@ End Function
 '===================================================================
 Public Function GetMonthlyValidationReport(monthIndex As Long, wardCode As String, _
     reportYear As Long) As Variant
-    ' Generate monthly validation report for a specific ward
+    ' Generate monthly validation report for ALL days in the month.
     '
     ' Args:
     '   monthIndex: Month number (1=January, 12=December)
@@ -164,63 +164,89 @@ Public Function GetMonthlyValidationReport(monthIndex As Long, wardCode As Strin
     '   reportYear: The year (e.g., 2026)
     '
     ' Returns:
-    '   Variant: 2D array with columns: Date, DailyTotal, IndividualCount, Status
-    '           Returns Empty if no data found
+    '   Variant: 2D array with 5 columns per day:
+    '     Col 1 - Date
+    '     Col 2 - DailyTotal   (0 if NO ENTRY)
+    '     Col 3 - IndividualCount (0 if NO ENTRY)
+    '     Col 4 - Status: "OK" | "MISMATCH" | "NO ENTRY"
+    '     Col 5 - Delta: DailyTotal - IndividualCount (0 if NO ENTRY)
+    '   Returns Empty on error.
 
     On Error GoTo ErrorHandler
-
-    Dim results() As Variant
-    Dim resultCount As Long
-    resultCount = 0
 
     ' Determine days in month
     Dim daysInMonth As Long
     daysInMonth = Day(DateSerial(reportYear, monthIndex + 1, 0))
 
-    ' Pre-allocate array (max size)
-    ReDim results(1 To daysInMonth, 1 To 4)
+    ' Allocate array for ALL days in the month (5 columns)
+    Dim results() As Variant
+    ReDim results(1 To daysInMonth, 1 To 5)
 
     Dim d As Long
     For d = 1 To daysInMonth
         Dim checkDate As Date
         checkDate = DateSerial(reportYear, monthIndex, d)
 
-        Dim dailyTotal As Long
-        Dim individualCount As Long
+        results(d, 1) = checkDate
 
-        ' Get daily total
         Dim dailyValue As Variant
         dailyValue = GetDailyAdmissionTotal(checkDate, wardCode)
 
-        ' Only include days with daily entries
-        If Not IsEmpty(dailyValue) Then
-            resultCount = resultCount + 1
+        If IsEmpty(dailyValue) Then
+            ' No daily bed-state entry exists for this date
+            results(d, 2) = 0           ' DailyTotal
+            results(d, 3) = 0           ' IndividualCount
+            results(d, 4) = "NO ENTRY"  ' Status
+            results(d, 5) = 0           ' Delta
+        Else
+            Dim dailyTotal As Long
+            Dim individualCount As Long
             dailyTotal = CLng(dailyValue)
             individualCount = CountIndividualAdmissions(checkDate, wardCode)
 
-            results(resultCount, 1) = checkDate
-            results(resultCount, 2) = dailyTotal
-            results(resultCount, 3) = individualCount
+            results(d, 2) = dailyTotal
+            results(d, 3) = individualCount
+            results(d, 5) = dailyTotal - individualCount  ' Delta
 
             If dailyTotal = individualCount Then
-                results(resultCount, 4) = "OK"
+                results(d, 4) = "OK"
             Else
-                results(resultCount, 4) = "MISMATCH"
+                results(d, 4) = "MISMATCH"
             End If
         End If
     Next d
 
-    ' Resize to actual count
-    If resultCount > 0 Then
-        ReDim Preserve results(1 To resultCount, 1 To 4)
-        GetMonthlyValidationReport = results
-    Else
-        GetMonthlyValidationReport = Empty
-    End If
-
+    GetMonthlyValidationReport = results
     Exit Function
 
 ErrorHandler:
-    ' On error, return Empty
     GetMonthlyValidationReport = Empty
 End Function
+
+'===================================================================
+' GET VALIDATION SUMMARY COUNTS
+'===================================================================
+Public Sub GetValidationSummary(results As Variant, _
+    ByRef okCount As Long, ByRef mismatchCount As Long, _
+    ByRef noEntryCount As Long)
+    ' Counts OK / MISMATCH / NO ENTRY rows from a GetMonthlyValidationReport result.
+    '
+    ' Args:
+    '   results: 2D array returned by GetMonthlyValidationReport
+    '   okCount, mismatchCount, noEntryCount: (ByRef) output counts
+
+    okCount = 0
+    mismatchCount = 0
+    noEntryCount = 0
+
+    If IsEmpty(results) Then Exit Sub
+
+    Dim i As Long
+    For i = 1 To UBound(results, 1)
+        Select Case results(i, 4)
+            Case "OK":       okCount = okCount + 1
+            Case "MISMATCH": mismatchCount = mismatchCount + 1
+            Case "NO ENTRY": noEntryCount = noEntryCount + 1
+        End Select
+    Next i
+End Sub

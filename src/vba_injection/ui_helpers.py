@@ -168,6 +168,33 @@ def add_button(designer: Any, name: str, caption: str, left: int, top: int,
     return ctrl
 
 
+def add_checkbox(designer: Any, name: str, caption: str, left: int, top: int,
+                 width: int, height: int) -> Any:
+    """
+    Add a checkbox control to a UserForm designer.
+
+    Args:
+        designer: UserForm designer object
+        name: Control name
+        caption: Checkbox label text
+        left: Left position in points
+        top: Top position in points
+        width: Width in points
+        height: Height in points
+
+    Returns:
+        The created checkbox control
+    """
+    ctrl = designer.Controls.Add("Forms.CheckBox.1")
+    ctrl.Name = name
+    ctrl.Caption = caption
+    ctrl.Left = left
+    ctrl.Top = top
+    ctrl.Width = width
+    ctrl.Height = height
+    return ctrl
+
+
 def add_listbox(designer: Any, name: str, left: int, top: int,
                 width: int, height: int) -> Any:
     """

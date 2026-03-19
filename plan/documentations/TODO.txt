@@ -38,3 +38,7 @@ I need some few validations for the age entry form.
 1. let the filter by date, by default filter by the date the user selects. that is you set the state to automatically update to the date the user selects.
 or enters. show the total admissions for the selected date and we will add validate button that will validate compare each entry with every day admission from the sheet for each day
 and outline places of inconsistencies for the user to verify.
+
+I want to implement proper validation of the age entry form. First of all the display should also show the specific ward for each 
+entry. the daily record should show the total admissions for the selected date for the selected ward. the validate button should have 
+multiple validations. instead of validating daily entries we should validate the total admissions for the selected month. and other validation options.
