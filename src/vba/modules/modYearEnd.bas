@@ -124,6 +124,7 @@ Public Sub ExportPreferencesConfig()
     ' Read current values from table
     Dim showEmergencyRemaining As Boolean
     Dim subtractDeaths As Boolean
+    Dim combinedEmergency As Boolean
 
     ' Find rows by key (flexible ordering)
     Dim i As Long
@@ -135,6 +136,8 @@ Public Sub ExportPreferencesConfig()
             showEmergencyRemaining = CBool(tbl.ListRows(i).Range(1, 2).Value)
         ElseIf key = "subtract_deaths_under_24hrs_from_admissions" Then
             subtractDeaths = CBool(tbl.ListRows(i).Range(1, 2).Value)
+        ElseIf key = "combined_emergency_entry" Then
+            combinedEmergency = CBool(tbl.ListRows(i).Range(1, 2).Value)
         End If
     Next i
 
@@ -151,7 +154,8 @@ Public Sub ExportPreferencesConfig()
     jsonStr = jsonStr & "  ""hospital_name"": ""HOHOE MUNICIPAL HOSPITAL""," & vbCrLf
     jsonStr = jsonStr & "  ""preferences"": {" & vbCrLf
     jsonStr = jsonStr & "    ""show_emergency_total_remaining"": " & LCase(CStr(showEmergencyRemaining)) & "," & vbCrLf
-    jsonStr = jsonStr & "    ""subtract_deaths_under_24hrs_from_admissions"": " & LCase(CStr(subtractDeaths)) & vbCrLf
+    jsonStr = jsonStr & "    ""subtract_deaths_under_24hrs_from_admissions"": " & LCase(CStr(subtractDeaths)) & "," & vbCrLf
+    jsonStr = jsonStr & "    ""combined_emergency_entry"": " & LCase(CStr(combinedEmergency)) & vbCrLf
     jsonStr = jsonStr & "  }," & vbCrLf
     jsonStr = jsonStr & "  ""metadata"": {" & vbCrLf
     jsonStr = jsonStr & "    ""created_date"": """ & Format(Date, "yyyy-mm-dd") & """," & vbCrLf

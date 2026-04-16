@@ -132,16 +132,19 @@ Private Sub UpdateValidationDisplay()
     Dim individualCount As Long
     Dim validationMsg As String
 
+    Dim valLabel As MSForms.Label
+    Set valLabel = Me.Controls("lblValidation")
+
     If ValidateAdmissionCount(CDate(checkDate), wc, dailyTotal, individualCount, validationMsg) Then
-        lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [OK]"
-        lblValidation.ForeColor = RGB(0, 128, 0)  ' Green
+        valLabel.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [OK]"
+        valLabel.ForeColor = RGB(0, 128, 0)  ' Green
     Else
         If dailyTotal = 0 And InStr(validationMsg, "No daily bed-state") > 0 Then
-            lblValidation.Caption = "Daily Total: Not entered yet"
-            lblValidation.ForeColor = RGB(128, 128, 128)  ' Gray
+            valLabel.Caption = "Daily Total: Not entered yet"
+            valLabel.ForeColor = RGB(128, 128, 128)  ' Gray
         Else
-            lblValidation.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [MISMATCH]"
-            lblValidation.ForeColor = RGB(255, 0, 0)  ' Red
+            valLabel.Caption = "Daily Total: " & dailyTotal & " | Individual Count: " & individualCount & " [MISMATCH]"
+            valLabel.ForeColor = RGB(255, 0, 0)  ' Red
         End If
     End If
 End Sub

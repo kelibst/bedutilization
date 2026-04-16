@@ -8,11 +8,12 @@
   "version": "1.0",
   "hospital_name": "HOHOE MUNICIPAL HOSPITAL",
   "preferences": {
-    "show_emergency_total_remaining": true,
-    "subtract_deaths_under_24hrs_from_admissions": true
+    "show_emergency_total_remaining": false,
+    "subtract_deaths_under_24hrs_from_admissions": true,
+    "combined_emergency_entry": false
   },
   "metadata": {
-    "created_date": "2026-02-17",
+    "created_date": "2026-04-16",
     "description": "Hospital-specific configuration preferences for bed utilization tracking"
   }
 }

@@ -24,6 +24,7 @@ class HospitalPreferences:
     """Hospital-specific behavioral preferences"""
     show_emergency_total_remaining: bool = True
     subtract_deaths_under_24hrs_from_admissions: bool = False
+    combined_emergency_entry: bool = False
 
 
 @dataclass
@@ -152,7 +153,8 @@ class WorkbookConfig:
                 prefs = data.get("preferences", {})
                 self.preferences = HospitalPreferences(
                     show_emergency_total_remaining=prefs.get("show_emergency_total_remaining", True),
-                    subtract_deaths_under_24hrs_from_admissions=prefs.get("subtract_deaths_under_24hrs_from_admissions", False)
+                    subtract_deaths_under_24hrs_from_admissions=prefs.get("subtract_deaths_under_24hrs_from_admissions", False),
+                    combined_emergency_entry=prefs.get("combined_emergency_entry", False)
                 )
                 print(f"Loaded hospital preferences from {self.preferences_path}")
             except Exception as e:

@@ -9,6 +9,7 @@
       "code": "MW",
       "name": "Male Medical",
       "bed_complement": 32,
+      "prev_year_remaining": 0,
       "is_emergency": false,
       "display_order": 1
     },
@@ -16,6 +17,7 @@
       "code": "FW",
       "name": "Female Medical",
       "bed_complement": 28,
+      "prev_year_remaining": 0,
       "is_emergency": false,
       "display_order": 2
     },
@@ -23,6 +25,7 @@
       "code": "CW",
       "name": "Paediatric",
       "bed_complement": 27,
+      "prev_year_remaining": 0,
       "is_emergency": false,
       "display_order": 3
     },
@@ -30,6 +33,7 @@
       "code": "BF",
       "name": "Block F",
       "bed_complement": 20,
+      "prev_year_remaining": 0,
       "is_emergency": false,
       "display_order": 4
     },
@@ -37,6 +41,7 @@
       "code": "BG",
       "name": "Block G",
       "bed_complement": 14,
+      "prev_year_remaining": 0,
       "is_emergency": false,
       "display_order": 5
     },
@@ -44,6 +49,7 @@
       "code": "BH",
       "name": "Block H",
       "bed_complement": 22,
+      "prev_year_remaining": 0,
       "is_emergency": false,
       "display_order": 6
     },
@@ -51,6 +57,7 @@
       "code": "NICU",
       "name": "Neonatal",
       "bed_complement": 15,
+      "prev_year_remaining": 0,
       "is_emergency": false,
       "display_order": 7
     },
@@ -58,6 +65,7 @@
       "code": "MAE",
       "name": "Male Emergency",
       "bed_complement": 10,
+      "prev_year_remaining": 0,
       "is_emergency": true,
       "display_order": 8
     },
@@ -65,8 +73,17 @@
       "code": "FAE",
       "name": "Female Emergency",
       "bed_complement": 10,
+      "prev_year_remaining": 0,
       "is_emergency": true,
       "display_order": 9
+    },
+    {
+      "code": "ICU",
+      "name": "Intenive care ward",
+      "bed_complement": 4,
+      "prev_year_remaining": 5,
+      "is_emergency": false,
+      "display_order": 10
     }
   ]
 }

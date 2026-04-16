@@ -89,7 +89,7 @@ def create_daily_entry_form(vbproj: Any) -> None:
     form = vbproj.VBComponents.Add(3)  # vbext_ct_MSForm
     form.Name = "frmDailyEntry"
     form.Properties("Caption").Value = "Daily Bed State Entry"
-    form.Properties("Width").Value = 420
+    form.Properties("Width").Value = 470
     form.Properties("Height").Value = 670
 
     d = form.Designer
@@ -131,13 +131,24 @@ def create_daily_entry_form(vbproj: Any) -> None:
     add_label(d, "lblBCLabel", "Bed Complement:", 230, y, 100, 18)
     lbl2 = add_label(d, "lblBedComplement", "0", 340, y, 60, 18)
     lbl2.Font.Bold = True
+
+    # Emergency combined previous remaining (hidden, overlays standard)
+    lbl_em_prev = add_label(d, "lblEmPrevRemaining", "0", 140, y, 250, 18)
+    lbl_em_prev.Font.Bold = True
+    lbl_em_prev.Font.Size = 12
+    lbl_em_prev.ForeColor = 0x006400
+    lbl_em_prev.Visible = False
+
+    lbl_em_bc = add_label(d, "lblEmBedComplement", "0", 340, y, 120, 18)
+    lbl_em_bc.Font.Bold = True
+    lbl_em_bc.Visible = False
     y += 32
 
     # Separator
     add_label(d, "lblSep1", "", 12, y, 390, 1).BackColor = 0xC0C0C0
     y += 8
 
-    # Numeric fields
+    # Numeric fields (standard mode)
     fields = [
         ("txtAdmissions", "Admissions:"),
         ("txtDischarges", "Discharges:"),
@@ -146,21 +157,64 @@ def create_daily_entry_form(vbproj: Any) -> None:
         ("txtTransIn", "Transfers In:"),
         ("txtTransOut", "Transfers Out:"),
     ]
+    field_y_positions = []
     for name, caption in fields:
+        field_y_positions.append(y)
         add_label(d, f"lbl{name}", caption, 12, y, 120, 18)
         add_textbox(d, name, 140, y, 80, 20)
         y += 28
+
+    # Emergency combined controls (hidden by default, overlay same Y positions)
+    em_fields = [
+        ("Adm", "Admissions:"),
+        ("Dis", "Discharges:"),
+        ("Dth", "Deaths:"),
+        ("D24", "Deaths < 24Hrs:"),
+        ("Ti",  "Transfers In:"),
+        ("To",  "Transfers Out:"),
+    ]
+
+    # Column headers
+    header_y = field_y_positions[0] - 18
+    for ctrl_name, caption, x in [
+        ("lblEmHdrMale", "Male", 140),
+        ("lblEmHdrFemale", "Female", 215),
+        ("lblEmHdrTotal", "Total", 290),
+    ]:
+        hdr = add_label(d, ctrl_name, caption, x, header_y, 65, 16)
+        hdr.Font.Bold = True
+        hdr.Visible = False
+
+    # Per-metric rows: label + male textbox + female textbox + total label
+    for i, (suffix, caption) in enumerate(em_fields):
+        fy = field_y_positions[i]
+        lbl_em = add_label(d, f"lblEm{suffix}", caption, 12, fy, 120, 18)
+        lbl_em.Visible = False
+        txt_m = add_textbox(d, f"txt{suffix}M", 140, fy, 65, 20)
+        txt_m.Visible = False
+        txt_f = add_textbox(d, f"txt{suffix}F", 215, fy, 65, 20)
+        txt_f.Visible = False
+        lbl_t = add_label(d, f"lbl{suffix}Total", "0", 290, fy, 65, 18)
+        lbl_t.Font.Bold = True
+        lbl_t.Visible = False
 
     # Separator
     add_label(d, "lblSep2", "", 12, y, 390, 1).BackColor = 0xC0C0C0
     y += 8
 
-    # Calculated Remaining
+    # Calculated Remaining (standard mode)
     add_label(d, "lblRemLabel", "REMAINING:", 12, y, 120, 20)
     lbl3 = add_label(d, "lblRemaining", "0", 140, y, 80, 20)
     lbl3.Font.Bold = True
     lbl3.Font.Size = 14
     lbl3.ForeColor = 0x006400
+
+    # Emergency combined remaining (hidden, overlays standard remaining)
+    lbl_em_rem = add_label(d, "lblEmRemaining", "0", 140, y, 250, 20)
+    lbl_em_rem.Font.Bold = True
+    lbl_em_rem.Font.Size = 14
+    lbl_em_rem.ForeColor = 0x006400
+    lbl_em_rem.Visible = False
     y += 28
 
     # Status label
@@ -578,7 +632,7 @@ def create_preferences_manager_form(vbproj: Any) -> None:
     form.Name = "frmPreferencesManager"
     form.Properties("Caption").Value = "Hospital Preferences Configuration"
     form.Properties("Width").Value = 500
-    form.Properties("Height").Value = 370
+    form.Properties("Height").Value = 400
 
     d = form.Designer
     y = 12
@@ -624,10 +678,19 @@ def create_preferences_manager_form(vbproj: Any) -> None:
     chk2.Top = y
     chk2.Width = 450
     chk2.Height = 18
+    y += 30
+
+    chk3 = d.Controls.Add("Forms.CheckBox.1")
+    chk3.Name = "chkCombinedEmergency"
+    chk3.Caption = "Combine Male/Female Emergency into single entry form"
+    chk3.Left = 20
+    chk3.Top = y
+    chk3.Width = 450
+    chk3.Height = 18
     y += 50
 
     # Buttons (arranged in 2 rows)
-    y_buttons = 240
+    y_buttons = 270
     # Top row - Primary actions
     add_button(d, "btnSave", "Save to Table", 20, y_buttons, 140, 32)
     add_button(d, "btnSaveRebuild", "Save & Rebuild", 170, y_buttons, 140, 32)
