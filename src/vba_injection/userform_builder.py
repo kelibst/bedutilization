@@ -7,7 +7,7 @@ Each function creates a complete UserForm with all controls and injects the VBA 
 from typing import Any
 from .ui_helpers import (
     add_label, add_textbox, add_combobox, add_optionbutton,
-    add_button, add_spinner, add_date_entry_control, add_listbox
+    add_button, add_spinner, add_date_entry_control, add_listbox, add_checkbox
 )
 from .utils import get_vba_path, read_vba_file
 from .calendar_form_builder import create_calendar_picker_form
@@ -89,7 +89,7 @@ def create_daily_entry_form(vbproj: Any) -> None:
     form = vbproj.VBComponents.Add(3)  # vbext_ct_MSForm
     form.Name = "frmDailyEntry"
     form.Properties("Caption").Value = "Daily Bed State Entry"
-    form.Properties("Width").Value = 420
+    form.Properties("Width").Value = 470
     form.Properties("Height").Value = 670
 
     d = form.Designer
@@ -131,13 +131,24 @@ def create_daily_entry_form(vbproj: Any) -> None:
     add_label(d, "lblBCLabel", "Bed Complement:", 230, y, 100, 18)
     lbl2 = add_label(d, "lblBedComplement", "0", 340, y, 60, 18)
     lbl2.Font.Bold = True
+
+    # Emergency combined previous remaining (hidden, overlays standard)
+    lbl_em_prev = add_label(d, "lblEmPrevRemaining", "0", 140, y, 250, 18)
+    lbl_em_prev.Font.Bold = True
+    lbl_em_prev.Font.Size = 12
+    lbl_em_prev.ForeColor = 0x006400
+    lbl_em_prev.Visible = False
+
+    lbl_em_bc = add_label(d, "lblEmBedComplement", "0", 340, y, 120, 18)
+    lbl_em_bc.Font.Bold = True
+    lbl_em_bc.Visible = False
     y += 32
 
     # Separator
     add_label(d, "lblSep1", "", 12, y, 390, 1).BackColor = 0xC0C0C0
     y += 8
 
-    # Numeric fields
+    # Numeric fields (standard mode)
     fields = [
         ("txtAdmissions", "Admissions:"),
         ("txtDischarges", "Discharges:"),
@@ -146,21 +157,64 @@ def create_daily_entry_form(vbproj: Any) -> None:
         ("txtTransIn", "Transfers In:"),
         ("txtTransOut", "Transfers Out:"),
     ]
+    field_y_positions = []
     for name, caption in fields:
+        field_y_positions.append(y)
         add_label(d, f"lbl{name}", caption, 12, y, 120, 18)
         add_textbox(d, name, 140, y, 80, 20)
         y += 28
+
+    # Emergency combined controls (hidden by default, overlay same Y positions)
+    em_fields = [
+        ("Adm", "Admissions:"),
+        ("Dis", "Discharges:"),
+        ("Dth", "Deaths:"),
+        ("D24", "Deaths < 24Hrs:"),
+        ("Ti",  "Transfers In:"),
+        ("To",  "Transfers Out:"),
+    ]
+
+    # Column headers
+    header_y = field_y_positions[0] - 18
+    for ctrl_name, caption, x in [
+        ("lblEmHdrMale", "Male", 140),
+        ("lblEmHdrFemale", "Female", 215),
+        ("lblEmHdrTotal", "Total", 290),
+    ]:
+        hdr = add_label(d, ctrl_name, caption, x, header_y, 65, 16)
+        hdr.Font.Bold = True
+        hdr.Visible = False
+
+    # Per-metric rows: label + male textbox + female textbox + total label
+    for i, (suffix, caption) in enumerate(em_fields):
+        fy = field_y_positions[i]
+        lbl_em = add_label(d, f"lblEm{suffix}", caption, 12, fy, 120, 18)
+        lbl_em.Visible = False
+        txt_m = add_textbox(d, f"txt{suffix}M", 140, fy, 65, 20)
+        txt_m.Visible = False
+        txt_f = add_textbox(d, f"txt{suffix}F", 215, fy, 65, 20)
+        txt_f.Visible = False
+        lbl_t = add_label(d, f"lbl{suffix}Total", "0", 290, fy, 65, 18)
+        lbl_t.Font.Bold = True
+        lbl_t.Visible = False
 
     # Separator
     add_label(d, "lblSep2", "", 12, y, 390, 1).BackColor = 0xC0C0C0
     y += 8
 
-    # Calculated Remaining
+    # Calculated Remaining (standard mode)
     add_label(d, "lblRemLabel", "REMAINING:", 12, y, 120, 20)
     lbl3 = add_label(d, "lblRemaining", "0", 140, y, 80, 20)
     lbl3.Font.Bold = True
     lbl3.Font.Size = 14
     lbl3.ForeColor = 0x006400
+
+    # Emergency combined remaining (hidden, overlays standard remaining)
+    lbl_em_rem = add_label(d, "lblEmRemaining", "0", 140, y, 250, 20)
+    lbl_em_rem.Font.Bold = True
+    lbl_em_rem.Font.Size = 14
+    lbl_em_rem.ForeColor = 0x006400
+    lbl_em_rem.Visible = False
     y += 28
 
     # Status label
@@ -578,7 +632,7 @@ def create_preferences_manager_form(vbproj: Any) -> None:
     form.Name = "frmPreferencesManager"
     form.Properties("Caption").Value = "Hospital Preferences Configuration"
     form.Properties("Width").Value = 500
-    form.Properties("Height").Value = 370
+    form.Properties("Height").Value = 400
 
     d = form.Designer
     y = 12
@@ -624,10 +678,19 @@ def create_preferences_manager_form(vbproj: Any) -> None:
     chk2.Top = y
     chk2.Width = 450
     chk2.Height = 18
+    y += 30
+
+    chk3 = d.Controls.Add("Forms.CheckBox.1")
+    chk3.Name = "chkCombinedEmergency"
+    chk3.Caption = "Combine Male/Female Emergency into single entry form"
+    chk3.Left = 20
+    chk3.Top = y
+    chk3.Width = 450
+    chk3.Height = 18
     y += 50
 
     # Buttons (arranged in 2 rows)
-    y_buttons = 240
+    y_buttons = 270
     # Top row - Primary actions
     add_button(d, "btnSave", "Save to Table", 20, y_buttons, 140, 32)
     add_button(d, "btnSaveRebuild", "Save & Rebuild", 170, y_buttons, 140, 32)
@@ -644,8 +707,13 @@ def create_validate_ward_form(vbproj: Any) -> None:
     """
     Create the frmValidateWard UserForm programmatically.
 
-    This form allows users to validate that individual admission entries
-    match daily bed-state totals for a specific ward and month.
+    Validates individual admission entries against daily bed-state totals
+    for a selected ward and month.  Shows ALL days in the month with:
+      - OK / MISMATCH / NO ENTRY status per day
+      - Delta column (Daily Total - Individual Count)
+      - "Errors Only" checkbox to filter to mismatches only
+      - Mismatch date list below the results grid
+      - Colour-coded export to a new worksheet
 
     Args:
         vbproj: VBProject object from Excel workbook
@@ -653,54 +721,68 @@ def create_validate_ward_form(vbproj: Any) -> None:
     form = vbproj.VBComponents.Add(3)  # vbext_ct_MSForm
     form.Name = "frmValidateWard"
     form.Properties("Caption").Value = "Validate Ward Admissions"
-    form.Properties("Width").Value = 460
-    form.Properties("Height").Value = 450
+    form.Properties("Width").Value = 470
+    form.Properties("Height").Value = 510
 
     d = form.Designer
-    y = 12  # current Y position
+    y = 12
 
-    # Instructions label
+    # ── Instructions ──────────────────────────────────────────────────────────
     lbl_instr = add_label(d, "lblInstructions",
         "Select a month and ward to validate admission counts:",
-        12, y, 420, 18)
+        12, y, 430, 18)
     lbl_instr.Font.Bold = True
     y += 28
 
-    # Month selection
+    # ── Month / Ward selectors ────────────────────────────────────────────────
     add_label(d, "lblMonth", "Month:", 12, y, 50, 18)
-    cmbMonth = add_combobox(d, "cmbMonth", 70, y, 120, 22, style=2)  # DropDownList
+    add_combobox(d, "cmbMonth", 70, y, 120, 22, style=2)   # DropDownList
     y += 30
 
-    # Ward selection
     add_label(d, "lblWard", "Ward:", 12, y, 50, 18)
-    cmbWard = add_combobox(d, "cmbWard", 70, y, 200, 22, style=2)  # DropDownList
+    add_combobox(d, "cmbWard", 70, y, 200, 22, style=2)    # DropDownList
     y += 35
 
-    # Action buttons
-    add_button(d, "btnValidate", "Validate Month", 12, y, 120, 30)
-    add_button(d, "btnExport", "Export Results", 142, y, 120, 30)
-    y += 40
+    # ── Action row: Validate button + Errors Only checkbox ────────────────────
+    add_button(d, "btnValidate", "Validate Month", 12, y, 120, 28)
+    chk = add_checkbox(d, "chkErrorsOnly", "Errors Only", 144, y + 5, 110, 18)
+    chk.Value = False
+    y += 38
 
-    # Results list box
-    add_label(d, "lblResults", "Validation Results:", 12, y, 150, 18)
+    # ── Results list (5 columns: Date | Daily | Individual | Delta | Status) ──
+    add_label(d, "lblResults", "Validation Results  (all days in month):", 12, y, 300, 18)
     y += 22
 
-    lstResults = add_listbox(d, "lstResults", 12, y, 420, 220)
-    lstResults.ColumnCount = 4
-    lstResults.ColumnWidths = "80 pt;60 pt;80 pt;70 pt"
-    y += 230
+    lstResults = add_listbox(d, "lstResults", 12, y, 430, 205)
+    lstResults.ColumnCount = 5
+    lstResults.ColumnWidths = "58 pt;46 pt;68 pt;46 pt;64 pt"
+    y += 215
 
-    # Summary label
-    lblSummary = add_label(d, "lblSummary", "Select month and ward, then click 'Validate Month'",
-                          12, y, 420, 20)
+    # ── Thin separator ────────────────────────────────────────────────────────
+    sep = add_label(d, "lblSep", "", 12, y, 430, 1)
+    sep.BackColor = 0xC0C0C0
+    y += 8
+
+    # ── Mismatch date list (hidden until there are errors) ────────────────────
+    lblErrDates = add_label(d, "lblErrorDates", "", 12, y, 430, 30)
+    lblErrDates.ForeColor = 0xC00000   # Dark red
+    lblErrDates.WordWrap = True
+    lblErrDates.Visible = False
+    y += 38
+
+    # ── Summary label ─────────────────────────────────────────────────────────
+    lblSummary = add_label(d, "lblSummary",
+        "Select month and ward, then click Validate Month",
+        12, y, 430, 20)
     lblSummary.Font.Bold = True
-    lblSummary.TextAlign = 2  # fmTextAlignCenter
-    lblSummary.ForeColor = 0x646464  # Gray
+    lblSummary.TextAlign = 2   # fmTextAlignCenter
+    lblSummary.ForeColor = 0x646464
     y += 30
 
-    # Close button
-    add_button(d, "btnClose", "Close", 320, y, 120, 30)
+    # ── Bottom buttons ────────────────────────────────────────────────────────
+    add_button(d, "btnExport", "Export Results", 12, y, 120, 28)
+    add_button(d, "btnClose",  "Close",          338, y, 100, 28)
 
-    # Inject VBA code
+    # ── Inject VBA code ───────────────────────────────────────────────────────
     code_path = get_vba_path("frmValidateWard.vba", "forms")
     form.CodeModule.AddFromString(read_vba_file(code_path))

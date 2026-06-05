@@ -701,6 +701,14 @@ Public Sub ImportFromOldWorkbook()
     Application.EnableEvents = False
     Application.Calculation = xlCalculationManual
 
+    ' Unprotect data sheets so ListRows.Add works
+    On Error Resume Next
+    ThisWorkbook.Sheets("DailyData").Unprotect
+    ThisWorkbook.Sheets("Admissions").Unprotect
+    ThisWorkbook.Sheets("DeathsData").Unprotect
+    ThisWorkbook.Sheets("TransfersData").Unprotect
+    On Error GoTo ErrorHandler
+
     ' Open old workbook
     Dim oldWB As Workbook
     Set oldWB = Workbooks.Open(oldPath, ReadOnly:=True, UpdateLinks:=False)
@@ -789,94 +797,172 @@ Public Sub ImportFromOldWorkbook()
     End If
     ' ────────────────────────────────────────────────────────
 
-    ' Import each row from old workbook
+    ' ── BULK IMPORT: Read old data into array, write in one shot ──
+    ' Reading/writing cell-by-cell and calling ListRows.Add per row is
+    ' extremely slow (~30 min for 860 rows). Array-based bulk copy is instant.
+
+    Dim oldRowCount As Long
+    oldRowCount = oldTbl.ListRows.Count
+
+    ' Read ALL old data into a VBA array (one read operation)
+    Dim oldData As Variant
+    If oldRowCount > 0 Then
+        oldData = oldTbl.DataBodyRange.Value
+    End If
+
+    ' Count valid rows first
+    Dim validCount As Long
+    validCount = 0
     Dim i As Long
     Dim importErrors As Long
     importErrors = 0
     Dim errorLog As String
-    
-    For i = 1 To oldTbl.ListRows.Count
-        ' Error handling for individual rows
-        On Error Resume Next
-        
-        ' Check if row has data
-        Dim oldDate As Variant
-        oldDate = oldTbl.ListRows(i).Range(1, 1).Value
-        
-        ' Skip if cell has error or is not a date
-        Dim isValidDate As Boolean
-        isValidDate = False
-        
-        If Not IsError(oldDate) Then
-            If IsDate(oldDate) And oldDate <> "" Then
-                isValidDate = True
+
+    For i = 1 To oldRowCount
+        If Not IsError(oldData(i, 1)) Then
+            If IsDate(oldData(i, 1)) And oldData(i, 1) <> "" Then
+                validCount = validCount + 1
             End If
         End If
-
-        If isValidDate Then
-            ' Determine target row
-            Dim newRow As ListRow
-            If useSeedRow And importCount = 0 Then
-                Set newRow = newTbl.ListRows(1)
-            Else
-                Set newRow = newTbl.ListRows.Add
-            End If
-
-            ' Copy INPUT columns only (1-9) with safety checks
-            With newRow.Range
-                .Cells(1, 1).Value = oldDate ' EntryDate
-                
-                ' Helper to safely copy values
-                .Cells(1, 2).Value = oldTbl.ListRows(i).Range(1, 2).Value ' Month
-                .Cells(1, 3).Value = oldTbl.ListRows(i).Range(1, 3).Value ' WardCode
-                .Cells(1, 4).Value = oldTbl.ListRows(i).Range(1, 4).Value ' Admissions
-                .Cells(1, 5).Value = oldTbl.ListRows(i).Range(1, 5).Value ' Discharges
-                .Cells(1, 6).Value = oldTbl.ListRows(i).Range(1, 6).Value ' Deaths
-                .Cells(1, 7).Value = oldTbl.ListRows(i).Range(1, 7).Value ' DeathsU24
-                .Cells(1, 8).Value = oldTbl.ListRows(i).Range(1, 8).Value ' TransfersIn
-                .Cells(1, 9).Value = oldTbl.ListRows(i).Range(1, 9).Value ' TransfersOut
-                
-                ' Columns 10-11: Will be calculated after import
-                .Cells(1, 12).Value = Now ' New timestamp
-            End With
-
-            If Err.Number <> 0 Then
-                importErrors = importErrors + 1
-                If importErrors <= 5 Then
-                    errorLog = errorLog & "Row " & i & ": " & Err.Description & vbCrLf
-                End If
-                Err.Clear
-            Else
-                importCount = importCount + 1
-            End If
-        End If
-        On Error GoTo ErrorHandler ' Restore main handler
     Next i
+
+    ' Prepare output array (12 columns matching tblDaily)
+    Dim outData() As Variant
+    ReDim outData(1 To validCount, 1 To 12)
+    Dim ts As Date
+    ts = Now
+
+    Dim outIdx As Long
+    outIdx = 0
+    For i = 1 To oldRowCount
+        Dim isValid As Boolean
+        isValid = False
+        If Not IsError(oldData(i, 1)) Then
+            If IsDate(oldData(i, 1)) And oldData(i, 1) <> "" Then
+                isValid = True
+            End If
+        End If
+
+        If isValid Then
+            outIdx = outIdx + 1
+            outData(outIdx, 1) = oldData(i, 1)  ' EntryDate
+            outData(outIdx, 2) = oldData(i, 2)  ' Month
+            outData(outIdx, 3) = oldData(i, 3)  ' WardCode
+            outData(outIdx, 4) = oldData(i, 4)  ' Admissions
+            outData(outIdx, 5) = oldData(i, 5)  ' Discharges
+            outData(outIdx, 6) = oldData(i, 6)  ' Deaths
+            outData(outIdx, 7) = oldData(i, 7)  ' DeathsU24
+            outData(outIdx, 8) = oldData(i, 8)  ' TransfersIn
+            outData(outIdx, 9) = oldData(i, 9)  ' TransfersOut
+            outData(outIdx, 10) = Empty          ' PrevRemaining (calc later)
+            outData(outIdx, 11) = Empty          ' Remaining (calc later)
+            outData(outIdx, 12) = ts             ' Timestamp
+        End If
+    Next i
+
+    importCount = validCount
+
+    ' Resize new table to fit all rows at once (instead of 860 individual .Add calls)
+    If validCount > 0 Then
+        ' If seed row exists, we need validCount rows total; otherwise add validCount
+        Dim startRow As Long
+        If useSeedRow Then
+            ' Need validCount - 1 more rows (seed row is already there)
+            If validCount > 1 Then
+                newTbl.ListRows(1).Range.Resize(1, 12).Value = Array("", "", "", 0, 0, 0, 0, 0, 0, 0, 0, "")
+                Dim addCount As Long
+                addCount = validCount - 1
+                ' Bulk add rows by resizing the table range
+                Dim lastTableRow As Long
+                lastTableRow = newTbl.Range.Row + newTbl.Range.Rows.Count - 1
+                newTbl.Resize newTbl.Range.Resize(validCount + 1, 12)  ' +1 for header
+            End If
+            startRow = newTbl.DataBodyRange.Row
+        Else
+            ' Table already has data, add rows by resizing
+            Dim existingRows As Long
+            existingRows = newTbl.ListRows.Count
+            newTbl.Resize newTbl.Range.Resize(existingRows + validCount + 1, 12)  ' +1 header
+            startRow = newTbl.DataBodyRange.Row + existingRows
+        End If
+
+        ' Write entire array to the range in ONE operation
+        newWS.Range(newWS.Cells(startRow, newTbl.Range.Column), _
+                     newWS.Cells(startRow + validCount - 1, newTbl.Range.Column + 11)).Value = outData
+
+        ' Format date column
+        newWS.Range(newWS.Cells(startRow, newTbl.Range.Column), _
+                     newWS.Cells(startRow + validCount - 1, newTbl.Range.Column)).NumberFormat = "yyyy-mm-dd"
+    End If
 
     ' Import individual death records BEFORE closing workbook
     Dim deathsResult As String
-    deathsResult = ImportIndividualRecords(oldWB, "tblDeaths", "DeathsData", _
-                                          "tblDeaths", "DeathsData", 13, COL_DEATH_ID)
+    deathsResult = BulkImportRecords(oldWB, "tblDeaths", "DeathsData", _
+                                     "tblDeaths", "DeathsData", 13, COL_DEATH_ID)
 
     ' Import individual admission records BEFORE closing workbook
     Dim admissionsResult As String
-    admissionsResult = ImportIndividualRecords(oldWB, "tblAdmissions", "Admissions", _
-                                              "tblAdmissions", "Admissions", 11, COL_ADM_ID)
+    admissionsResult = BulkImportRecords(oldWB, "tblAdmissions", "Admissions", _
+                                         "tblAdmissions", "Admissions", 11, COL_ADM_ID)
 
     ' Close old workbook NOW that we're done importing
     oldWB.Close SaveChanges:=False
     Set oldWB = Nothing
 
-    ' Sort imported data
+    ' Sort imported data (by WardCode, EntryDate)
     SortDailyTable
 
-    ' Recalculate all rows using unified function
-    Dim j As Long
-    For j = 1 To newTbl.ListRows.Count
-        If Not IsEmpty(newTbl.ListRows(j).Range(1, 1).Value) Then
-            CalculateRemainingForRow newTbl.ListRows(j)
-        End If
-    Next j
+    ' Recalculate remaining using array (read all, compute, write all)
+    Dim calcRows As Long
+    calcRows = newTbl.ListRows.Count
+    If calcRows > 0 Then
+        ' Read all data into array
+        Dim calcData As Variant
+        calcData = newTbl.DataBodyRange.Value
+
+        Dim lastCalcWard As String
+        Dim lastCalcRem As Long
+        lastCalcWard = ""
+
+        Dim j As Long
+        For j = 1 To calcRows
+            If Not IsEmpty(calcData(j, COL_DAILY_ENTRY_DATE)) Then
+                Dim cWard As String
+                cWard = CStr(calcData(j, COL_DAILY_WARD_CODE))
+
+                If cWard <> lastCalcWard Then
+                    lastCalcWard = cWard
+                    lastCalcRem = GetPrevYearRemaining(cWard)
+                End If
+
+                Dim cAdm As Long, cDis As Long, cDth As Long
+                Dim cD24 As Long, cTi As Long, cTo As Long
+                cAdm = CLng(Val(calcData(j, COL_DAILY_ADMISSIONS)))
+                cDis = CLng(Val(calcData(j, COL_DAILY_DISCHARGES)))
+                cDth = CLng(Val(calcData(j, COL_DAILY_DEATHS)))
+                cD24 = CLng(Val(calcData(j, COL_DAILY_DEATHS_U24)))
+                cTi = CLng(Val(calcData(j, COL_DAILY_TRANSFERS_IN)))
+                cTo = CLng(Val(calcData(j, COL_DAILY_TRANSFERS_OUT)))
+
+                calcData(j, COL_DAILY_PREV_REMAINING) = lastCalcRem
+                Dim cRem As Long
+                cRem = lastCalcRem + cAdm + cTi - cDis - cDth - cTo - cD24
+                calcData(j, COL_DAILY_REMAINING) = cRem
+                lastCalcRem = cRem
+            End If
+        Next j
+
+        ' Write all calculated data back in one shot
+        newTbl.DataBodyRange.Value = calcData
+    End If
+
+    ' Re-protect data sheets
+    On Error Resume Next
+    ThisWorkbook.Sheets("DailyData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("Admissions").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("DeathsData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("TransfersData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    On Error GoTo 0
 
     Application.Calculation = xlCalculationAutomatic
     Application.Calculate
@@ -899,6 +985,14 @@ Public Sub ImportFromOldWorkbook()
     Exit Sub
 
 ErrorHandler:
+    ' Re-protect data sheets on error
+    On Error Resume Next
+    ThisWorkbook.Sheets("DailyData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("Admissions").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("DeathsData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("TransfersData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    On Error GoTo 0
+
     Application.Calculation = xlCalculationAutomatic
     Application.ScreenUpdating = True
     Application.EnableEvents = True
@@ -912,18 +1006,17 @@ ErrorHandler:
 End Sub
 
 '===================================================================
-' HELPER: Import Individual Records (Deaths, Admissions, etc.)
+' HELPER: Bulk Import Records (Deaths, Admissions, etc.)
+' Uses array-based bulk copy instead of row-by-row ListRows.Add
 '===================================================================
-Private Function ImportIndividualRecords(oldWB As Workbook, _
+Private Function BulkImportRecords(oldWB As Workbook, _
     oldTableName As String, oldSheetName As String, _
     newTableName As String, newSheetName As String, _
     columnCount As Integer, idColumn As Integer) As String
 
     On Error GoTo ErrorHandler
 
-    ' Result message with import stats
     Dim resultMsg As String
-    resultMsg = ""
 
     ' Validate old workbook has the table
     Dim oldWS As Worksheet
@@ -932,8 +1025,7 @@ Private Function ImportIndividualRecords(oldWB As Workbook, _
     On Error GoTo ErrorHandler
 
     If oldWS Is Nothing Then
-        resultMsg = oldTableName & ": Sheet not found (skipped)"
-        ImportIndividualRecords = resultMsg
+        BulkImportRecords = oldTableName & ": Sheet not found (skipped)"
         Exit Function
     End If
 
@@ -943,10 +1035,20 @@ Private Function ImportIndividualRecords(oldWB As Workbook, _
     On Error GoTo ErrorHandler
 
     If oldTbl Is Nothing Then
-        resultMsg = oldTableName & ": Table not found (skipped)"
-        ImportIndividualRecords = resultMsg
+        BulkImportRecords = oldTableName & ": Table not found (skipped)"
         Exit Function
     End If
+
+    Dim oldRowCount As Long
+    oldRowCount = oldTbl.ListRows.Count
+    If oldRowCount = 0 Then
+        BulkImportRecords = oldTableName & ": 0 records"
+        Exit Function
+    End If
+
+    ' Read ALL old data into array at once
+    Dim oldData As Variant
+    oldData = oldTbl.DataBodyRange.Value
 
     ' Get new workbook table
     Dim newWS As Worksheet
@@ -954,103 +1056,116 @@ Private Function ImportIndividualRecords(oldWB As Workbook, _
     Dim newTbl As ListObject
     Set newTbl = newWS.ListObjects(newTableName)
 
-    ' Track stats
-    Dim importedCount As Integer
-    Dim duplicateCount As Integer
-    Dim errorCount As Integer
-    importedCount = 0
-    duplicateCount = 0
-    errorCount = 0
-
-    ' Build dictionary of existing IDs to detect duplicates
+    ' Build dictionary of existing IDs
     Dim existingIDs As Object
     Set existingIDs = CreateObject("Scripting.Dictionary")
 
-    Dim j As Long
-    For j = 1 To newTbl.ListRows.Count
-        Dim existingID As String
-        existingID = CStr(newTbl.ListRows(j).Range(1, idColumn).Value)
-        If existingID <> "" Then
-            existingIDs(existingID) = True
+    If newTbl.ListRows.Count >= 1 Then
+        If Not IsEmpty(newTbl.ListRows(1).Range(1, 1).Value) Then
+            Dim existData As Variant
+            existData = newTbl.DataBodyRange.Value
+            Dim j As Long
+            For j = 1 To UBound(existData, 1)
+                Dim eid As String
+                eid = CStr(existData(j, idColumn))
+                If eid <> "" Then existingIDs(eid) = True
+            Next j
         End If
-    Next j
+    End If
 
-    ' Import rows from old table
+    ' First pass: count valid rows and resolve IDs
+    Dim validCount As Long
+    validCount = 0
+    Dim duplicateCount As Long
+    duplicateCount = 0
     Dim i As Long
-    For i = 1 To oldTbl.ListRows.Count
-        On Error Resume Next
 
-        ' Check if row is empty (skip seed rows)
-        Dim firstCell As Variant
-        firstCell = oldTbl.ListRows(i).Range(1, 1).Value
-        If IsEmpty(firstCell) Or firstCell = "" Then
-            GoTo NextRow
+    For i = 1 To oldRowCount
+        If Not IsEmpty(oldData(i, 1)) And oldData(i, 1) <> "" Then
+            validCount = validCount + 1
         End If
-
-        ' Get original ID
-        Dim originalID As String
-        originalID = CStr(oldTbl.ListRows(i).Range(1, idColumn).Value)
-
-        ' Handle duplicate ID by generating new one with -IMP suffix
-        Dim finalID As String
-        finalID = originalID
-        Dim suffix As Integer
-        suffix = 1
-
-        While existingIDs.Exists(finalID)
-            If suffix = 1 Then
-                finalID = originalID & "-IMP"
-            Else
-                finalID = originalID & "-IMP" & suffix
-            End If
-            suffix = suffix + 1
-            duplicateCount = duplicateCount + 1
-        Wend
-
-        ' Add new ID to dictionary
-        existingIDs(finalID) = True
-
-        ' Get row to use (seed row if empty, otherwise new row)
-        Dim newRow As ListRow
-        If newTbl.ListRows.Count = 1 And _
-           (IsEmpty(newTbl.ListRows(1).Range(1, 1).Value) Or _
-            newTbl.ListRows(1).Range(1, 1).Value = "") Then
-            Set newRow = newTbl.ListRows(1)
-        Else
-            Set newRow = newTbl.ListRows.Add
-        End If
-
-        ' Copy all columns
-        Dim col As Integer
-        For col = 1 To columnCount
-            If col = idColumn Then
-                ' Use potentially renamed ID
-                newRow.Range(1, col).Value = finalID
-            Else
-                ' Copy value as-is
-                newRow.Range(1, col).Value = oldTbl.ListRows(i).Range(1, col).Value
-            End If
-        Next col
-
-        importedCount = importedCount + 1
-
-NextRow:
-        On Error GoTo ErrorHandler
     Next i
 
-    ' Build result message
-    resultMsg = oldTableName & ": " & importedCount & " records"
+    If validCount = 0 Then
+        BulkImportRecords = oldTableName & ": 0 records"
+        Exit Function
+    End If
+
+    ' Build output array with ID deduplication
+    Dim outData() As Variant
+    ReDim outData(1 To validCount, 1 To columnCount)
+    Dim outIdx As Long
+    outIdx = 0
+
+    For i = 1 To oldRowCount
+        If Not IsEmpty(oldData(i, 1)) And oldData(i, 1) <> "" Then
+            outIdx = outIdx + 1
+
+            ' Handle duplicate IDs
+            Dim originalID As String
+            originalID = CStr(oldData(i, idColumn))
+            Dim finalID As String
+            finalID = originalID
+            Dim sfx As Integer
+            sfx = 1
+            Do While existingIDs.Exists(finalID)
+                If sfx = 1 Then
+                    finalID = originalID & "-IMP"
+                Else
+                    finalID = originalID & "-IMP" & sfx
+                End If
+                sfx = sfx + 1
+                duplicateCount = duplicateCount + 1
+            Loop
+            existingIDs(finalID) = True
+
+            ' Copy all columns
+            Dim col As Integer
+            For col = 1 To columnCount
+                If col = idColumn Then
+                    outData(outIdx, col) = finalID
+                Else
+                    outData(outIdx, col) = oldData(i, col)
+                End If
+            Next col
+        End If
+    Next i
+
+    ' Check if new table has empty seed row
+    Dim hasSeedRow As Boolean
+    hasSeedRow = False
+    If newTbl.ListRows.Count = 1 Then
+        If IsEmpty(newTbl.ListRows(1).Range(1, 1).Value) Or _
+           newTbl.ListRows(1).Range(1, 1).Value = "" Then
+            hasSeedRow = True
+        End If
+    End If
+
+    ' Resize table and write all data in one shot
+    Dim writeStartRow As Long
+    If hasSeedRow Then
+        newTbl.Resize newTbl.Range.Resize(validCount + 1, columnCount)
+        writeStartRow = newTbl.DataBodyRange.Row
+    Else
+        Dim existingRowCount As Long
+        existingRowCount = newTbl.ListRows.Count
+        newTbl.Resize newTbl.Range.Resize(existingRowCount + validCount + 1, columnCount)
+        writeStartRow = newTbl.DataBodyRange.Row + existingRowCount
+    End If
+
+    newWS.Range(newWS.Cells(writeStartRow, newTbl.Range.Column), _
+                 newWS.Cells(writeStartRow + validCount - 1, newTbl.Range.Column + columnCount - 1)).Value = outData
+
+    resultMsg = oldTableName & ": " & validCount & " records"
     If duplicateCount > 0 Then
         resultMsg = resultMsg & " (" & duplicateCount & " IDs renamed)"
     End If
 
-    ImportIndividualRecords = resultMsg
+    BulkImportRecords = resultMsg
     Exit Function
 
 ErrorHandler:
-    errorCount = errorCount + 1
-    resultMsg = oldTableName & ": " & importedCount & " records (" & errorCount & " errors)"
-    ImportIndividualRecords = resultMsg
+    BulkImportRecords = oldTableName & ": Error - " & Err.Description
 End Function
 
 '===================================================================

@@ -203,7 +203,10 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
          "Show 'Emergency Total Remaining' row in Monthly Summary"),
         ("subtract_deaths_under_24hrs_from_admissions",
          config.preferences.subtract_deaths_under_24hrs_from_admissions,
-         "Subtract deaths under 24hrs from monthly admission totals")
+         "Subtract deaths under 24hrs from monthly admission totals"),
+        ("combined_emergency_entry",
+         config.preferences.combined_emergency_entry,
+         "Enter Male/Female Emergency as a single combined entry")
     ]
 
     for idx, (key, value, desc) in enumerate(pref_rows, prefs_start + 2):
@@ -1100,6 +1103,259 @@ def build_monthly_summary_sheet(wb: Workbook, config: WorkbookConfig):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# PERIOD SUMMARY SHEETS (Quarterly, Half-Year)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_period_summary_sheet(wb: Workbook, config: WorkbookConfig,
+                               sheet_name: str, tab_color: str, periods: list):
+    """
+    Generic period-summary builder mirroring Monthly Summary layout.
+    `periods` is a list of dicts: {"label", "start_month", "end_month"}.
+    Used by Quarterly Summary (4 periods) and Half-Year Summary (2 periods).
+    """
+    ws = wb.create_sheet(sheet_name)
+    ws.sheet_properties.tabColor = tab_color
+
+    current_row = 1
+    for period in periods:
+        label = period["label"]
+        sm = period["start_month"]
+        em = period["end_month"]
+        days = sum(config.days_in_month(m) for m in range(sm, em + 1))
+        last_day = config.days_in_month(em)
+
+        # Header
+        ws.merge_cells(start_row=current_row, start_column=1,
+                       end_row=current_row, end_column=16)
+        c = ws.cell(row=current_row, column=1, value="GHANA HEALTH SERVICE")
+        c.font = HEADER_FONT
+        c.alignment = CENTER
+        current_row += 1
+
+        ws.merge_cells(start_row=current_row, start_column=1,
+                       end_row=current_row, end_column=16)
+        c = ws.cell(row=current_row, column=1,
+                    value=f"PERIOD BED UTILIZATION FORM - {label}, {config.year}")
+        c.font = SUBHEADER_FONT
+        c.alignment = CENTER
+        current_row += 1
+
+        # Column headers
+        col_headers = [
+            "WARD", "Patients on bed\nat the beginning\nof the period",
+            "Bed Complement", "Admissions", "Discharges", "Deaths",
+            "Deaths\n<24Hrs", "Patient\nDays", "Transfer In", "Transfer\nOut",
+            "Average\nDaily Bed\nOccupancy", "Average\nLength\nof Stay",
+            "Bed\nTurnover\nInterval", "Bed\nTurnover\nRate",
+            "Percentage\nof\nOccupancy", "Death\nRate"
+        ]
+        for col, header in enumerate(col_headers, 1):
+            c = ws.cell(row=current_row, column=col, value=header)
+            c.font = HEADER_FONT_WHITE
+            c.fill = HEADER_FILL
+            c.alignment = CENTER_WRAP
+            c.border = THIN_BORDER
+        current_row += 1
+
+        # ── Ward rows ────────────────────────────────────────────────
+        for ward in config.WARDS:
+            r = current_row
+            wc = ward.code
+
+            # Col A: Ward name
+            ws.cell(row=r, column=1, value=ward.name).font = BOLD_FONT
+            ws.cell(row=r, column=1).border = THIN_BORDER
+
+            # Col B: Patients at beginning of period
+            if sm == 1:
+                f_beg = (
+                    f'=IFERROR(INDEX(tblWardConfig[PrevYearRemaining],'
+                    f'MATCH("{wc}",tblWardConfig[WardCode],0)),0)'
+                )
+            else:
+                pm = sm - 1
+                pld = config.days_in_month(pm)
+                f_beg = (
+                    f'=IFERROR(SUMIFS(tblDaily[Remaining],'
+                    f'tblDaily[EntryDate],DATE({config.year},{pm},{pld}),'
+                    f'tblDaily[WardCode],"{wc}"),0)'
+                )
+            ws.cell(row=r, column=2, value=f_beg).font = NORMAL_FONT
+
+            # Col C: Bed Complement
+            f_bc = f'=IFERROR(INDEX(tblWardConfig[BedComplement],MATCH("{wc}",tblWardConfig[WardCode],0)),0)'
+            ws.cell(row=r, column=3, value=f_bc).font = NORMAL_FONT
+
+            # Col D-G: Admissions, Discharges, Deaths, Deaths<24Hrs (month-range criteria)
+            daily_fields = {
+                4: "Admissions", 5: "Discharges", 6: "Deaths", 7: "DeathsUnder24Hrs"
+            }
+            for col_num, field in daily_fields.items():
+                if field == "Admissions" and config.preferences.subtract_deaths_under_24hrs_from_admissions:
+                    f = (f'=SUMIFS(tblDaily[Admissions],'
+                         f'tblDaily[Month],">="&{sm},tblDaily[Month],"<="&{em},'
+                         f'tblDaily[WardCode],"{wc}") - '
+                         f'SUMIFS(tblDaily[DeathsUnder24Hrs],'
+                         f'tblDaily[Month],">="&{sm},tblDaily[Month],"<="&{em},'
+                         f'tblDaily[WardCode],"{wc}")')
+                else:
+                    f = (f'=SUMIFS(tblDaily[{field}],'
+                         f'tblDaily[Month],">="&{sm},tblDaily[Month],"<="&{em},'
+                         f'tblDaily[WardCode],"{wc}")')
+                ws.cell(row=r, column=col_num, value=f).font = NORMAL_FONT
+
+            # Col H: Patient Days (Remaining summed over month range)
+            f_pd = (f'=SUMIFS(tblDaily[Remaining],'
+                    f'tblDaily[Month],">="&{sm},tblDaily[Month],"<="&{em},'
+                    f'tblDaily[WardCode],"{wc}")')
+            ws.cell(row=r, column=8, value=f_pd).font = NORMAL_FONT
+
+            # Col I-J: Transfers In/Out (month-range)
+            f_ti = (f'=SUMIFS(tblDaily[TransfersIn],'
+                    f'tblDaily[Month],">="&{sm},tblDaily[Month],"<="&{em},'
+                    f'tblDaily[WardCode],"{wc}")')
+            f_to = (f'=SUMIFS(tblDaily[TransfersOut],'
+                    f'tblDaily[Month],">="&{sm},tblDaily[Month],"<="&{em},'
+                    f'tblDaily[WardCode],"{wc}")')
+            ws.cell(row=r, column=9, value=f_ti).font = NORMAL_FONT
+            ws.cell(row=r, column=10, value=f_to).font = NORMAL_FONT
+
+            # Col K: Average Daily Bed Occupancy = Patient Days / Days in period
+            ws.cell(row=r, column=11, value=f'=IFERROR(H{r}/{days},0)').font = NORMAL_FONT
+            # Col L: Average Length of Stay = PD / (Disch + Deaths)
+            ws.cell(row=r, column=12, value=f'=IFERROR(H{r}/(E{r}+F{r}),0)').font = NORMAL_FONT
+            # Col M: Bed Turnover Interval
+            ws.cell(row=r, column=13, value=f'=IFERROR((C{r}*{days}-H{r})/(E{r}+F{r}),0)').font = NORMAL_FONT
+            # Col N: Bed Turnover Rate
+            ws.cell(row=r, column=14, value=f'=IFERROR((E{r}+F{r})/C{r},0)').font = NORMAL_FONT
+            # Col O: % Occupancy
+            ws.cell(row=r, column=15, value=f'=IFERROR((H{r}/(C{r}*{days}))*100,0)').font = NORMAL_FONT
+            # Col P: Death Rate
+            ws.cell(row=r, column=16, value=f'=IFERROR((F{r}/(D{r}+B{r}))*100,0)').font = NORMAL_FONT
+
+            for col in range(11, 17):
+                ws.cell(row=r, column=col).number_format = '0.00'
+            for col in range(1, 17):
+                ws.cell(row=r, column=col).alignment = CENTER
+                ws.cell(row=r, column=col).border = THIN_BORDER
+
+            current_row += 1
+
+        # ── EMERGENCY TOTAL REMAINING row ────────────────────────────
+        if config.preferences.show_emergency_total_remaining:
+            r = current_row
+            ws.cell(row=r, column=1, value="EMERGENCY TOTAL REMAINING").font = BOLD_FONT
+            ws.cell(row=r, column=1).fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
+
+            date_formula = f'DATE({config.year},{em},{last_day})'
+            emer_wards = [w for w in config.WARDS if w.is_emergency]
+            parts = []
+            for ew in emer_wards:
+                parts.append(f'SUMIFS(tblDaily[Remaining],tblDaily[EntryDate],{date_formula},tblDaily[WardCode],"{ew.code}")')
+
+            ws.cell(row=r, column=2, value=f'={"+".join(parts)}').font = BOLD_FONT
+
+            for col in range(3, 17):
+                ws.cell(row=r, column=col, value="")
+                ws.cell(row=r, column=col).fill = PatternFill(start_color="FFD966", end_color="FFD966", fill_type="solid")
+
+            for col in range(1, 17):
+                ws.cell(row=r, column=col).alignment = CENTER
+                ws.cell(row=r, column=col).border = THIN_BORDER
+
+            current_row += 1
+
+        # ── TOTAL row ────────────────────────────────────────────────
+        r = current_row
+        ws.cell(row=r, column=1, value="TOTAL").font = BOLD_FONT
+        ws.cell(row=r, column=1).fill = TOTAL_FILL
+
+        emergency_offset = 1 if config.preferences.show_emergency_total_remaining else 0
+        first_ward_row = r - len(config.WARDS) - emergency_offset
+        last_ward_row = r - 1 - emergency_offset
+        for col in range(2, 11):
+            cl = get_column_letter(col)
+            ws.cell(row=r, column=col,
+                    value=f'=SUM({cl}{first_ward_row}:{cl}{last_ward_row})').font = BOLD_FONT
+
+        ws.cell(row=r, column=11, value=f'=IFERROR(H{r}/{days},0)').font = BOLD_FONT
+        ws.cell(row=r, column=12, value=f'=IFERROR(H{r}/(E{r}+F{r}),0)').font = BOLD_FONT
+        ws.cell(row=r, column=13, value=f'=IFERROR((C{r}*{days}-H{r})/(E{r}+F{r}),0)').font = BOLD_FONT
+        ws.cell(row=r, column=14, value=f'=IFERROR((E{r}+F{r})/C{r},0)').font = BOLD_FONT
+        ws.cell(row=r, column=15, value=f'=IFERROR((H{r}/(C{r}*{days}))*100,0)').font = BOLD_FONT
+        ws.cell(row=r, column=16, value=f'=IFERROR((F{r}/(D{r}+B{r}))*100,0)').font = BOLD_FONT
+
+        for col in range(1, 17):
+            ws.cell(row=r, column=col).alignment = CENTER
+            ws.cell(row=r, column=col).border = THIN_BORDER
+            ws.cell(row=r, column=col).fill = TOTAL_FILL
+        for col in range(11, 17):
+            ws.cell(row=r, column=col).number_format = '0.00'
+        current_row += 1
+
+        # ── Emergency subtotal row ───────────────────────────────────
+        r = current_row
+        ws.cell(row=r, column=1, value="Emergency").font = BOLD_FONT
+        ws.cell(row=r, column=1).fill = LIGHT_YELLOW_FILL
+
+        emer_wards = [w for w in config.WARDS if w.is_emergency]
+        for col in range(2, 11):
+            parts = []
+            for ew in emer_wards:
+                ew_idx = config.WARDS.index(ew)
+                ew_row = first_ward_row + ew_idx
+                parts.append(f'{get_column_letter(col)}{ew_row}')
+            ws.cell(row=r, column=col, value=f'={"+".join(parts)}').font = BOLD_FONT
+
+        ws.cell(row=r, column=11, value=f'=IFERROR(H{r}/{days},0)').font = BOLD_FONT
+        ws.cell(row=r, column=12, value=f'=IFERROR(H{r}/(E{r}+F{r}),0)').font = BOLD_FONT
+        ws.cell(row=r, column=13, value=f'=IFERROR((C{r}*{days}-H{r})/(E{r}+F{r}),0)').font = BOLD_FONT
+        ws.cell(row=r, column=14, value=f'=IFERROR((E{r}+F{r})/C{r},0)').font = BOLD_FONT
+        ws.cell(row=r, column=15, value=f'=IFERROR((H{r}/(C{r}*{days}))*100,0)').font = BOLD_FONT
+        ws.cell(row=r, column=16, value=f'=IFERROR((F{r}/(D{r}+B{r}))*100,0)').font = BOLD_FONT
+
+        for col in range(1, 17):
+            ws.cell(row=r, column=col).alignment = CENTER
+            ws.cell(row=r, column=col).border = THIN_BORDER
+            ws.cell(row=r, column=col).fill = LIGHT_YELLOW_FILL
+        for col in range(11, 17):
+            ws.cell(row=r, column=col).number_format = '0.00'
+
+        current_row += 2  # spacer before next period
+
+    # Column widths
+    ws.column_dimensions["A"].width = 18
+    ws.column_dimensions["B"].width = 14
+    ws.column_dimensions["C"].width = 14
+    for i in range(4, 11):
+        ws.column_dimensions[get_column_letter(i)].width = 12
+    for i in range(11, 17):
+        ws.column_dimensions[get_column_letter(i)].width = 12
+
+    ws.page_setup.orientation = "landscape"
+    ws.page_setup.fitToWidth = 1
+    ws.page_setup.fitToPage = True
+
+
+def build_quarterly_summary_sheet(wb: Workbook, config: WorkbookConfig):
+    periods = [
+        {"label": "Q1 (Jan-Mar)", "start_month": 1,  "end_month": 3},
+        {"label": "Q2 (Apr-Jun)", "start_month": 4,  "end_month": 6},
+        {"label": "Q3 (Jul-Sep)", "start_month": 7,  "end_month": 9},
+        {"label": "Q4 (Oct-Dec)", "start_month": 10, "end_month": 12},
+    ]
+    build_period_summary_sheet(wb, config, "Quarterly Summary", "2E75B6", periods)
+
+
+def build_halfyear_summary_sheet(wb: Workbook, config: WorkbookConfig):
+    periods = [
+        {"label": "H1 (Jan-Jun)", "start_month": 1, "end_month": 6},
+        {"label": "H2 (Jul-Dec)", "start_month": 7, "end_month": 12},
+    ]
+    build_period_summary_sheet(wb, config, "Half-Year Summary", "548235", periods)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # AGES SUMMARY SHEET
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1553,6 +1809,12 @@ def build_structure(config: WorkbookConfig, output_path: str):
 
     # 4. Monthly Summary
     build_monthly_summary_sheet(wb, config)
+
+    # 4a. Quarterly Summary (Q1..Q4)
+    build_quarterly_summary_sheet(wb, config)
+
+    # 4b. Half-Year Summary (H1..H2)
+    build_halfyear_summary_sheet(wb, config)
 
     # 5. Ages Summary
     build_ages_summary_sheet(wb, config)

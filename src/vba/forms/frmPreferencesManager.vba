@@ -17,6 +17,8 @@ Private Sub UserForm_Initialize()
             chkShowEmergencyRemaining.Value = val
         ElseIf key = "subtract_deaths_under_24hrs_from_admissions" Then
             chkSubtractDeaths.Value = val
+        ElseIf key = "combined_emergency_entry" Then
+            chkCombinedEmergency.Value = val
         End If
     Next i
 End Sub
@@ -34,6 +36,8 @@ Private Sub SavePreferencesToTable()
             tbl.ListRows(i).Range(1, 2).Value = chkShowEmergencyRemaining.Value
         ElseIf key = "subtract_deaths_under_24hrs_from_admissions" Then
             tbl.ListRows(i).Range(1, 2).Value = chkSubtractDeaths.Value
+        ElseIf key = "combined_emergency_entry" Then
+            tbl.ListRows(i).Range(1, 2).Value = chkCombinedEmergency.Value
         End If
     Next i
 End Sub
