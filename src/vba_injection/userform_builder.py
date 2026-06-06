@@ -13,7 +13,7 @@ from .utils import get_vba_path, read_vba_file
 from .calendar_form_builder import create_calendar_picker_form
 
 
-def add_date_filter_controls(d: Any, y: int, width: int = 390) -> int:
+def add_date_filter_controls(d: Any, y: int, width: int = 390, allow_pending: bool = False) -> int:
     """
     Add date filter controls for recent list filtering.
 
@@ -42,9 +42,15 @@ def add_date_filter_controls(d: Any, y: int, width: int = 390) -> int:
     y += 20
 
     # Option buttons for filter mode
-    opt1 = add_optionbutton(d, "optAllRecords", "All Records", 12, y, 120, 18)
-    opt1.Value = True  # Default selected
-    opt2 = add_optionbutton(d, "optSpecificDate", "Specific Date:", 140, y, 110, 18)
+    if allow_pending:
+        opt1 = add_optionbutton(d, "optAllRecords", "All Records", 12, y, 90, 18)
+        opt1.Value = True  # Default selected
+        opt2 = add_optionbutton(d, "optSpecificDate", "Specific Date:", 110, y, 100, 18)
+        opt3 = add_optionbutton(d, "optPending", "Pending Deaths", 220, y, 120, 18)
+    else:
+        opt1 = add_optionbutton(d, "optAllRecords", "All Records", 12, y, 120, 18)
+        opt1.Value = True  # Default selected
+        opt2 = add_optionbutton(d, "optSpecificDate", "Specific Date:", 140, y, 110, 18)
     y += 24
 
     # Date control - try DTPicker first, fallback to TextBox
@@ -357,6 +363,8 @@ def create_ages_entry_form(vbproj: Any) -> None:
 
     # Date with calendar picker
     lbl, txt, btn = add_date_entry_control(d, "txtDate", "Date:", 12, y, label_width=60, textbox_width=100)
+    add_button(d, "btnPrevDay", "<", 205, y, 25, 20)
+    add_button(d, "btnNextDay", ">", 235, y, 25, 20)
     y += 32
 
     # Divider
@@ -368,7 +376,8 @@ def create_ages_entry_form(vbproj: Any) -> None:
     add_textbox(d, "txtAge", 80, y, 60, 24).Font.Size = 12
 
     add_label(d, "lblUnit", "Unit:", 150, y+4, 40, 18)
-    add_combobox(d, "cmbAgeUnit", 195, y, 100, 22)
+    add_combobox(d, "cmbAgeUnit", 195, y, 70, 22)
+    add_checkbox(d, "chkLockUnit", "Lock Unit", 270, y+2, 70, 18)
     y += 38
 
     # Sex
@@ -432,10 +441,39 @@ def create_death_form(vbproj: Any) -> None:
     form.Name = "frmDeath"
     form.Properties("Caption").Value = "Death Record Entry"
     form.Properties("Width").Value = 420
-    form.Properties("Height").Value = 620
+    form.Properties("Height").Value = 680
 
     d = form.Designer
     y = 12
+
+    # Step 1: Select Month
+    add_label(d, "lblMonthLabel", "1. Select Month:", 12, y, 120, 18).Font.Bold = True
+    add_combobox(d, "cmbMonth", 140, y, 150, 22)
+    y += 28
+
+    # Status label for month validation
+    lbl = add_label(d, "lblMonthStatus", "", 12, y, 390, 18)
+    lbl.ForeColor = 0x0000FF  # Red
+    y += 20
+
+    # Step 2: Pending list
+    add_label(d, "lblPending", "2. Select Pending Death Entry:", 12, y, 300, 18).Font.Bold = True
+    y += 20
+    lst = d.Controls.Add("Forms.ListBox.1")
+    lst.Name = "lstRecent"
+    lst.Left = 12
+    lst.Top = y
+    lst.Width = 390
+    lst.Height = 100
+    y += 110
+    
+    # Separator
+    add_label(d, "lblSep", "", 12, y, 390, 1).BackColor = 0xC0C0C0
+    y += 12
+
+    # Step 3: Enter Details
+    add_label(d, "lblDetails", "3. Enter Death Details:", 12, y, 300, 18).Font.Bold = True
+    y += 24
 
     # Date with calendar picker
     lbl, txt, btn = add_date_entry_control(d, "txtDate", "Date of Death:", 12, y, label_width=120, textbox_width=100)
@@ -500,23 +538,9 @@ def create_death_form(vbproj: Any) -> None:
     y += 24
 
     # Buttons
-    add_button(d, "btnSaveNew", "Save && New", 12, y, 110, 30)
-    add_button(d, "btnSaveClose", "Save && Close", 130, y, 110, 30)
-    add_button(d, "btnCancel", "Cancel", 250, y, 90, 30)
-    y += 38
-
-    # Date filter controls
-    y = add_date_filter_controls(d, y, 390)
-
-    # Recent deaths list
-    add_label(d, "lblRecent", "Recent Deaths:", 12, y, 150, 18)
-    y += 20
-    lst = d.Controls.Add("Forms.ListBox.1")
-    lst.Name = "lstRecent"
-    lst.Left = 12
-    lst.Top = y
-    lst.Width = 390
-    lst.Height = 100
+    add_button(d, "btnSaveNew", "Save && Next Pending", 12, y, 150, 30)
+    add_button(d, "btnSaveClose", "Save && Close", 170, y, 110, 30)
+    add_button(d, "btnCancel", "Cancel", 290, y, 90, 30)
 
     code_path = get_vba_path("frmDeath.vba", "forms")
     form.CodeModule.AddFromString(read_vba_file(code_path))

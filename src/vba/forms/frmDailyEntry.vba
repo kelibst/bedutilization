@@ -823,5 +823,6 @@ Private Function SaveCurrentEntry() As Boolean
     End If
 
     isDirty = False
+    AutoSaveWorkbook
     SaveCurrentEntry = True
 End Function

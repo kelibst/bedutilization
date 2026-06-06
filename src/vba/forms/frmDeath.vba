@@ -30,96 +30,85 @@ Private Sub UserForm_Initialize()
     ' Populate cause of death combo with previous entries
     PopulateCauses
 
-    ' Initialize date filter controls
-    On Error Resume Next
-    ' Handle both DTPicker and TextBox
-    If TypeName(Me.Controls("dtpFilterDate")) = "DTPicker" Then
-        dtpFilterDate.Value = Date
-    Else
-        dtpFilterDate.Value = Format(Date, "dd/mm/yyyy")
-    End If
-    On Error GoTo 0
-
-    UpdateRecentList
+    ' Populate cmbMonth
+    cmbMonth.Clear
+    For i = 1 To 12
+        cmbMonth.AddItem MonthName(i)
+    Next i
+    cmbMonth.ListIndex = Month(Date) - 1 ' Triggers cmbMonth_Change
 End Sub
 
-Private Sub UpdateRecentList(Optional filterDate As Variant)
+Private Sub cmbMonth_Change()
+    If cmbMonth.ListIndex < 0 Then Exit Sub
+    UpdatePendingList
+End Sub
+
+Private Sub UpdatePendingList()
     On Error Resume Next
     Application.ScreenUpdating = False
     lstRecent.Clear
+    lblMonthStatus.Caption = ""
+    lblMonthStatus.ForeColor = RGB(0, 0, 255)
 
-    Dim tbl As ListObject
-    Set tbl = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
+    Dim selectedMonth As Long
+    selectedMonth = cmbMonth.ListIndex + 1
 
-    Dim i As Long
+    Dim tblDay As ListObject
+    Set tblDay = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
+    
+    Dim tblDeaths As ListObject
+    Set tblDeaths = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
+
+    Dim r As Long, rowDate As Date, rowWard As String
+    Dim deathsTotal As Long, deathsEntered As Long
+    Dim dRow As Long
     Dim displayCount As Integer
+    Dim monthHasData As Boolean
+    
     displayCount = 0
+    monthHasData = False
 
-    ' Check if filtering by date or showing all (last 10)
-    If Not IsMissing(filterDate) And Not IsEmpty(filterDate) Then
-        ' Filter mode: Show ALL entries matching the selected date
-        For i = 1 To tbl.ListRows.Count
-            If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
-               tbl.ListRows(i).Range(1, 2).Value <> "" Then
-                Dim entryDate As Date
-                entryDate = CDate(tbl.ListRows(i).Range(1, 2).Value)
+    For r = 1 To tblDay.ListRows.Count
+        If Not IsEmpty(tblDay.ListRows(r).Range(1, 1).Value) Then
+            Dim entryMth As Long
+            entryMth = CLng(tblDay.ListRows(r).Range(1, 2).Value)
+            
+            If entryMth = selectedMonth Then
+                monthHasData = True
+                rowDate = CDate(tblDay.ListRows(r).Range(1, 1).Value)
+                rowWard = Trim(CStr(tblDay.ListRows(r).Range(1, 3).Value))
+                deathsTotal = CLng(Val(tblDay.ListRows(r).Range(1, 6).Value)) + CLng(Val(tblDay.ListRows(r).Range(1, 7).Value))
 
-                If DateValue(entryDate) = DateValue(filterDate) Then
-                    lstRecent.AddItem Format(entryDate, "dd/mm/yyyy") & " | " & _
-                        tbl.ListRows(i).Range(1, 6).Value & " | " & _
-                        tbl.ListRows(i).Range(1, 5).Value & " | " & _
-                        tbl.ListRows(i).Range(1, 4).Value
-                    displayCount = displayCount + 1
+                If deathsTotal > 0 Then
+                    ' Count how many entered in tblDeaths
+                    deathsEntered = 0
+                    For dRow = 1 To tblDeaths.ListRows.Count
+                        If Not IsEmpty(tblDeaths.ListRows(dRow).Range(1, 2).Value) Then
+                            If DateValue(CDate(tblDeaths.ListRows(dRow).Range(1, 2).Value)) = DateValue(rowDate) And _
+                               Trim(CStr(tblDeaths.ListRows(dRow).Range(1, 4).Value)) = rowWard Then
+                                deathsEntered = deathsEntered + 1
+                            End If
+                        End If
+                    Next dRow
+
+                    If deathsEntered < deathsTotal Then
+                        lstRecent.AddItem Format(rowDate, "dd/mm/yyyy") & " | Pending | " & (deathsTotal - deathsEntered) & " missing | " & rowWard
+                        displayCount = displayCount + 1
+                    End If
                 End If
             End If
-        Next i
-        lblRecentStatus.Caption = displayCount & " entries on " & Format(filterDate, "dd/mm/yyyy")
-    Else
-        ' Default mode: Show last 10 entries
-        Dim startRow As Long
-        startRow = tbl.ListRows.Count - 9
-        If startRow < 1 Then startRow = 1
-
-        For i = startRow To tbl.ListRows.Count
-            If Not IsEmpty(tbl.ListRows(i).Range(1, 2).Value) And _
-               tbl.ListRows(i).Range(1, 2).Value <> "" Then
-                lstRecent.AddItem Format(tbl.ListRows(i).Range(1, 2).Value, "dd/mm/yyyy") & " | " & _
-                    tbl.ListRows(i).Range(1, 6).Value & " | " & _
-                    tbl.ListRows(i).Range(1, 5).Value & " | " & _
-                    tbl.ListRows(i).Range(1, 4).Value
-                displayCount = displayCount + 1
-            End If
-        Next i
-        lblRecentStatus.Caption = "Last " & displayCount & " entries"
-    End If
-
-    Application.ScreenUpdating = True
-End Sub
-
-' Event handler for "All Records" option
-Private Sub optAllRecords_Click()
-    On Error Resume Next
-    dtpFilterDate.Enabled = False
-    UpdateRecentList
-End Sub
-
-' Event handler for "Specific Date" option
-Private Sub optSpecificDate_Click()
-    On Error Resume Next
-    dtpFilterDate.Enabled = True
-    UpdateRecentList dtpFilterDate.Value
-End Sub
-
-' Event handler for date picker change
-Private Sub dtpFilterDate_Change()
-    On Error Resume Next
-    If optSpecificDate.Value = True Then
-        Dim filterVal As Variant
-        filterVal = dtpFilterDate.Value
-        If IsDate(filterVal) Or (VarType(filterVal) = vbString And Len(filterVal) > 0) Then
-            UpdateRecentList CDate(filterVal)
         End If
+    Next r
+
+    If Not monthHasData Then
+        lblMonthStatus.Caption = "No daily entries exist for this month yet. Please complete Daily Bed Entry first."
+        lblMonthStatus.ForeColor = RGB(255, 0, 0) ' Red
+    ElseIf displayCount = 0 Then
+        lblMonthStatus.Caption = "All deaths for this month have been fully entered."
+        lblMonthStatus.ForeColor = RGB(0, 128, 0) ' Green
     End If
+    
+    Application.ScreenUpdating = True
 End Sub
 
 Private Sub lstRecent_Click()
@@ -142,6 +131,29 @@ Private Sub lstRecent_Click()
     namePart = Trim(Mid(selectedItem, firstPipe + 1, secondPipe - firstPipe - 1))
     folderPart = Trim(Mid(selectedItem, secondPipe + 1, thirdPipe - secondPipe - 1))
     wardPart = Trim(Mid(selectedItem, thirdPipe + 1))
+    
+    If namePart = "Pending" Then
+        ' Redirect for pending entry
+        txtDate.Value = datePart
+        
+        Dim jWard As Long
+        For jWard = 0 To UBound(wardCodes)
+            If wardCodes(jWard) = wardPart Then
+                cmbWard.ListIndex = jWard
+                Exit For
+            End If
+        Next jWard
+        
+        editingRowIndex = 0
+        txtFolderNum.Value = ""
+        txtName.Value = ""
+        txtAge.Value = ""
+        cmbCause.Value = ""
+        chkWithin24.Value = False
+        lblStatus.Caption = "Ready for new entry (" & wardPart & ")"
+        txtFolderNum.SetFocus
+        Exit Sub
+    End If
 
     ' Find the matching row in the table by date, deceased name, and folder number
     Dim entryDate As Date
@@ -253,7 +265,7 @@ Private Sub btnSaveNew_Click()
         txtAge.Value = ""
         cmbCause.Value = ""
         chkWithin24.Value = False
-        UpdateRecentList
+        UpdatePendingList
         txtFolderNum.SetFocus
     End If
 End Sub
@@ -326,6 +338,7 @@ Private Function SaveDeathEntry() As Boolean
     End If
 
     lblStatus.ForeColor = RGB(0, 128, 0)
+    AutoSaveWorkbook
     SaveDeathEntry = True
 End Function
 
@@ -369,7 +382,7 @@ Private Sub UpdateDeathRow(rowIndex As Long, deathDate As Variant, wardCode As S
         .Cells(1, COL_DEATH_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
 
-    UpdateRecentList
+    UpdatePendingList
     Exit Sub
 
 UpdateError:

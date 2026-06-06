@@ -1271,3 +1271,35 @@ Public Sub SaveDeath(deathDate As Variant, wardCode As String, _
         .Cells(1, COL_DEATH_TIMESTAMP).NumberFormat = "yyyy-mm-dd hh:mm"
     End With
 End Sub
+
+Public Sub AutoSaveWorkbook()
+    On Error Resume Next
+    ThisWorkbook.Save
+End Sub
+
+Public Sub ToggleDataProtection()
+    Dim ws As Worksheet
+    Dim isProtected As Boolean
+    
+    ' Check current state of DailyData
+    Set ws = ThisWorkbook.Sheets("DailyData")
+    isProtected = ws.ProtectContents
+    
+    On Error Resume Next
+    
+    If isProtected Then
+        ' Unprotect all data sheets
+        ThisWorkbook.Sheets("DailyData").Unprotect
+        ThisWorkbook.Sheets("Admissions").Unprotect
+        ThisWorkbook.Sheets("DeathsData").Unprotect
+        ThisWorkbook.Sheets("TransfersData").Unprotect
+        MsgBox "Data sheets are now UNLOCKED." & vbCrLf & "You can use table features directly.", vbInformation, "Protection Disabled"
+    Else
+        ' Reprotect all data sheets
+        ThisWorkbook.Sheets("DailyData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+        ThisWorkbook.Sheets("Admissions").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+        ThisWorkbook.Sheets("DeathsData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+        ThisWorkbook.Sheets("TransfersData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+        MsgBox "Data sheets are now LOCKED against accidental edits.", vbInformation, "Protection Enabled"
+    End If
+End Sub

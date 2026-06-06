@@ -56,7 +56,9 @@ def create_nav_buttons(wb: Any) -> None:
     ws.Range("A31").Value = "Import from Old Workbook"
     ws.Range("A33").Value = "Recalculate All Data"
     ws.Range("A35").Value = "Verify Calculations"
+    ws.Range("A37").Value = "Toggle Sheet Protection"
     add_sheet_button(ws, "btnImport", "Control!A31:C31", "ImportFromOldWorkbook")
     add_sheet_button(ws, "btnRecalcAll", "Control!A33:C33", "RecalculateAllRows")
     add_sheet_button(ws, "btnVerify", "Control!A35:C35", "VerifyCalculations")
+    add_sheet_button(ws, "btnToggleProtection", "Control!A37:C37", "ToggleDataProtection")
     # Note: "Fix Date Formats" button removed - date formats now initialized automatically during build

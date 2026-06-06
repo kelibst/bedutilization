@@ -4,17 +4,84 @@ Private wardCodes As Variant
 Private wardNames As Variant
 Private editingRowIndex As Long  ' 0 = new entry, >0 = editing specific row
 Private recentRowIndices() As Long  ' Parallel array storing tblAdmissions row indices for lstRecent
+Private isCombinedEmergency As Boolean
+Private emergencyWardIndex As Long
+
+Private Function GetPreferenceValue(prefKey As String) As Boolean
+    On Error Resume Next
+    Dim tbl As ListObject
+    Set tbl = ThisWorkbook.Sheets("Control").ListObjects("tblPreferences")
+    Dim i As Long
+    For i = 1 To tbl.ListRows.Count
+        If Trim(CStr(tbl.ListRows(i).Range(1, 1).Value)) = prefKey Then
+            GetPreferenceValue = CBool(tbl.ListRows(i).Range(1, 2).Value)
+            Exit Function
+        End If
+    Next i
+    GetPreferenceValue = False
+End Function
+
+Private Function IsEmergencySelected() As Boolean
+    IsEmergencySelected = (isCombinedEmergency And cmbWard.ListIndex = emergencyWardIndex)
+End Function
+
+Private Function GetActualWardCode(comboIndex As Long) As String
+    If Not isCombinedEmergency Then
+        GetActualWardCode = wardCodes(comboIndex)
+        Exit Function
+    End If
+    Dim origIdx As Long, comboIdx As Long
+    comboIdx = 0
+    For origIdx = 0 To UBound(wardCodes)
+        If wardCodes(origIdx) = "FAE" Then
+            ' Skip FAE in combined mode
+        Else
+            If comboIdx = comboIndex Then
+                GetActualWardCode = wardCodes(origIdx)
+                Exit Function
+            End If
+            comboIdx = comboIdx + 1
+        End If
+    Next origIdx
+End Function
 
 Private Sub UserForm_Initialize()
     editingRowIndex = 0  ' Start in new entry mode
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
 
+    ' Check combined emergency preference
+    isCombinedEmergency = GetPreferenceValue("combined_emergency_entry")
+
+    Dim maeFound As Boolean, faeFound As Boolean
+    maeFound = False
+    faeFound = False
+    Dim k As Long
+    For k = 0 To UBound(wardCodes)
+        If wardCodes(k) = "MAE" Then maeFound = True
+        If wardCodes(k) = "FAE" Then faeFound = True
+    Next k
+
     ' Wards
+    emergencyWardIndex = -1
     Dim i As Long
-    For i = 0 To UBound(wardNames)
-        cmbWard.AddItem wardNames(i)
-    Next i
+    If isCombinedEmergency And maeFound And faeFound Then
+        For i = 0 To UBound(wardNames)
+            If wardCodes(i) = "MAE" Then
+                cmbWard.AddItem "Emergency"
+                emergencyWardIndex = cmbWard.ListCount - 1
+            ElseIf wardCodes(i) = "FAE" Then
+                ' Skip FAE -- merged into "Emergency"
+            Else
+                cmbWard.AddItem wardNames(i)
+            End If
+        Next i
+    Else
+        isCombinedEmergency = False
+        For i = 0 To UBound(wardNames)
+            cmbWard.AddItem wardNames(i)
+        Next i
+    End If
     If cmbWard.ListCount > 0 Then cmbWard.ListIndex = 0
 
     ' Date defaults
@@ -62,10 +129,15 @@ Private Sub UpdateRecentList(Optional filterDate As Variant)
     ' Reset parallel row-index array
     ReDim recentRowIndices(0)
 
-    ' Get current ward filter from combo
     Dim wc As String
     wc = ""
-    If cmbWard.ListIndex >= 0 Then wc = wardCodes(cmbWard.ListIndex)
+    If cmbWard.ListIndex >= 0 Then
+        If IsEmergencySelected() Then
+            wc = "" ' special handling for Emergency
+        Else
+            wc = GetActualWardCode(cmbWard.ListIndex)
+        End If
+    End If
 
     ' Check if filtering by date or showing all (last 10)
     If Not IsMissing(filterDate) And Not IsEmpty(filterDate) Then
@@ -152,7 +224,11 @@ Private Sub UpdateValidationDisplay()
     If IsEmpty(checkDate) Then Exit Sub
 
     Dim wc As String
-    wc = wardCodes(cmbWard.ListIndex)
+    If IsEmergencySelected() Then
+        wc = "MAE" ' fallback for validation check
+    Else
+        wc = GetActualWardCode(cmbWard.ListIndex)
+    End If
 
     Dim dailyTotal As Long
     Dim individualCount As Long
@@ -251,12 +327,24 @@ Private Sub lstRecent_Click()
     Dim rowWc As String
     rowWc = tbl.ListRows(actualRow).Range(1, COL_ADM_WARD_CODE).Value
     Dim j As Long
-    For j = 0 To UBound(wardCodes)
-        If wardCodes(j) = rowWc Then
-            cmbWard.ListIndex = j
-            Exit For
-        End If
-    Next j
+    
+    If isCombinedEmergency And (rowWc = "MAE" Or rowWc = "FAE") Then
+        cmbWard.ListIndex = emergencyWardIndex
+    Else
+        Dim comboIdx As Long
+        comboIdx = 0
+        For j = 0 To UBound(wardCodes)
+            If isCombinedEmergency And wardCodes(j) = "FAE" Then
+                ' Skip
+            Else
+                If wardCodes(j) = rowWc Then
+                    cmbWard.ListIndex = comboIdx
+                    Exit For
+                End If
+                comboIdx = comboIdx + 1
+            End If
+        Next j
+    End If
 
     ' Load age and unit
     txtAge.Value = CStr(tbl.ListRows(actualRow).Range(1, COL_ADM_AGE).Value)
@@ -320,7 +408,15 @@ Private Sub btnSave_Click()
     dt = CDate(dt)
 
     Dim wc As String
-    wc = wardCodes(cmbWard.ListIndex)
+    If IsEmergencySelected() Then
+        If optMale.Value Then
+            wc = "MAE"
+        Else
+            wc = "FAE"
+        End If
+    Else
+        wc = GetActualWardCode(cmbWard.ListIndex)
+    End If
 
     Dim age As Long
     age = CLng(txtAge.Value)
@@ -345,12 +441,26 @@ Private Sub btnSave_Click()
         Application.Run "SaveAdmission", dt, wc, "-", "", age, unit, sex, nhis
         lblStatus.Caption = "Saved: " & age & " " & unit & " (" & sex & ", " & nhis & ")"
     End If
+    AutoSaveWorkbook
 
     ' Post-Save Reset
     lblStatus.ForeColor = RGB(0, 128, 0) ' Green
 
     txtAge.Value = ""
-    cmbAgeUnit.ListIndex = 0 ' Reset to Years
+    
+    Dim lockCtrl As Object
+    On Error Resume Next
+    Set lockCtrl = Me.Controls("chkLockUnit")
+    On Error GoTo 0
+    
+    If Not lockCtrl Is Nothing Then
+        If Not lockCtrl.Value Then
+            cmbAgeUnit.ListIndex = 0 ' Reset to Years
+        End If
+    Else
+        cmbAgeUnit.ListIndex = 0 ' Reset to Years
+    End If
+    
     ' Keep persistent selections (Ward, Date, Sex, NHIS)
 
     UpdateRecentList dt
@@ -439,6 +549,23 @@ End Sub
 Private Sub cmbWard_Change()
     On Error Resume Next
     If cmbWard.ListIndex < 0 Then Exit Sub
+    
+    Dim wc As String
+    If IsEmergencySelected() Then
+        wc = ""
+    Else
+        wc = GetActualWardCode(cmbWard.ListIndex)
+    End If
+    
+    If wc = "NICU" Then
+        cmbAgeUnit.ListIndex = 2 ' Days
+        Dim lockCtrl As Object
+        Set lockCtrl = Me.Controls("chkLockUnit")
+        If Not lockCtrl Is Nothing Then
+            lockCtrl.Value = True
+        End If
+    End If
+    
     Dim dt As Variant
     Dim errMsg As String
     dt = modDateUtils.ParseDate(txtDate.Value, errMsg)
@@ -464,6 +591,24 @@ Private Sub txtDate_picker_Click()
     ' Show calendar picker and update date field
     If modDateUtils.ShowDatePicker(txtDate) Then
         UpdateValidationDisplay
+    End If
+End Sub
+
+Private Sub btnPrevDay_Click()
+    Dim dt As Variant
+    Dim errMsg As String
+    dt = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If Not IsEmpty(dt) And modDateUtils.ValidateDate(dt, errMsg) Then
+        txtDate.Value = Format(CDate(dt) - 1, "dd/mm/yyyy")
+    End If
+End Sub
+
+Private Sub btnNextDay_Click()
+    Dim dt As Variant
+    Dim errMsg As String
+    dt = modDateUtils.ParseDate(txtDate.Value, errMsg)
+    If Not IsEmpty(dt) And modDateUtils.ValidateDate(dt, errMsg) Then
+        txtDate.Value = Format(CDate(dt) + 1, "dd/mm/yyyy")
     End If
 End Sub
 
@@ -498,7 +643,12 @@ Private Sub UpdateAdmissionTotals(filterDate As Date)
     End If
 
     Dim wc As String
-    wc = wardCodes(cmbWard.ListIndex)
+    If IsEmergencySelected() Then
+        wc = "MAE" ' For totals, could be MAE/FAE, but in Ages it's separate. We'll use the selected sex's code
+        If optMale.Value Then wc = "MAE" Else wc = "FAE"
+    Else
+        wc = GetActualWardCode(cmbWard.ListIndex)
+    End If
 
     Dim tblAdm As ListObject
     Set tblAdm = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
@@ -582,7 +732,13 @@ Private Sub btnValidate_Click()
     ' Scope: selected ward or all wards
     Dim selectedWard As String
     selectedWard = ""
-    If cmbWard.ListIndex >= 0 Then selectedWard = wardCodes(cmbWard.ListIndex)
+    If cmbWard.ListIndex >= 0 Then
+        If IsEmergencySelected() Then
+            If optMale.Value Then selectedWard = "MAE" Else selectedWard = "FAE"
+        Else
+            selectedWard = GetActualWardCode(cmbWard.ListIndex)
+        End If
+    End If
 
     Dim tblAdm As ListObject
     Dim tblDay As ListObject

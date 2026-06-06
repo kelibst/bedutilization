@@ -113,6 +113,7 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
         (31, "[ RECALCULATE ALL DATA ]",   "Recalculate all remaining values"),
         (33, "[ VERIFY CALCULATIONS ]",    "Verify calculation accuracy"),
         (35, "[ FIX DATE FORMATS ]",       "Fix date formatting issues in all data tables"),
+        (37, "[ TOGGLE SHEET PROTECTION ]","Unlock data sheets to use table features directly (insert rows, delete, etc)"),
     ]
     for row, label, desc in buttons:
         ws.merge_cells(f"A{row}:C{row}")
@@ -143,7 +144,7 @@ def build_control_sheet(wb: Workbook, config: WorkbookConfig):
         ws.cell(row=row, column=4, value=desc).font = NORMAL_FONT
 
     # ── Ward Configuration Table ─────────────────────────────────────────
-    config_start = 37  # Row for section header (after all buttons)
+    config_start = 39  # Row for section header (after all buttons)
 
     # Section header for ward configuration
     ws.merge_cells(f"A{config_start}:F{config_start}")

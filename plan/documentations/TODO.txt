@@ -42,3 +42,27 @@ and outline places of inconsistencies for the user to verify.
 I want to implement proper validation of the age entry form. First of all the display should also show the specific ward for each 
 entry. the daily record should show the total admissions for the selected date for the selected ward. the validate button should have 
 multiple validations. instead of validating daily entries we should validate the total admissions for the selected month. and other validation options.
+
+
+For the ages entry, when the user is entring for nicu days should be automaticallylocked on.
+so we will add locked days or months or years for entry for the ages entry form. also right now there are no ways to correct 
+ages entry when the entry is done for example in wrong date and you just want to change the date. so fro that we just make the form allow
+ for changing the dates on the ages entry form. also the ages entry form does not have the automatic go to next day instead the user has to manually check for every 
+ days. 
+
+ also for the death entries, use the daily bed entry to derive the number of deaths for each ward and redirect the user to those days to make the entry for the death.
+ for all of these plan carefully then we implement. 
+
+for ages entry the emergency ward should combine just like the daily entry. when you select male we know that should go for MAE 
+when you select female it should go for FAE instead of needing ot enter for 2 wards manually.
+
+also for some reason, all forms are always protected making entries difficult. i 
+want one button on the dashboard to unprotect them and allow for editing at the opening of the file. 
+
+
+so for the death entry form I want to make a few changes,
+so the entry should be base on the selected month that the user selects. 
+after the user selects the month, we confirm days of death for each wards starting 
+and for each of those days that we confirm the days of death for and number of death for those days, 
+we allow the user to enter the details of those deaths. 
+and if the user selects a month that has no daily entry or date of entry for, we remind them. 

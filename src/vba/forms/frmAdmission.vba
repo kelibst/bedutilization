@@ -331,6 +331,7 @@ Private Function SaveAdmissionEntry() As Boolean
     End If
 
     lblStatus.ForeColor = RGB(0, 128, 0)
+    AutoSaveWorkbook
     SaveAdmissionEntry = True
 End Function
 
