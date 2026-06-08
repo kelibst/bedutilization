@@ -21,6 +21,7 @@ from .userform_builder import (
     create_ward_manager_form,
     create_preferences_manager_form,
     create_validate_ward_form,
+    create_age_fixer_form,
 )
 from .calendar_form_builder import create_calendar_picker_form
 from .navigation import create_nav_buttons
@@ -231,6 +232,7 @@ def inject_vba(xlsx_path: str, xlsm_path: str, config: "WorkbookConfig") -> None
         create_ward_manager_form(vbproj)
         create_preferences_manager_form(vbproj)
         create_validate_ward_form(vbproj)
+        create_age_fixer_form(vbproj)
 
         # 4. Add navigation buttons to Control sheet
         print("  Adding navigation buttons...")

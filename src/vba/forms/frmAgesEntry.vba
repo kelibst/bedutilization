@@ -422,6 +422,24 @@ Private Sub btnSave_Click()
     age = CLng(txtAge.Value)
     Dim unit As String
     unit = cmbAgeUnit.Value
+    
+    ' Validate Age anomalies
+    If unit = "Years" And (age > 110 Or age = 0) Then
+        If MsgBox("Are you sure the age is " & age & " years? This seems unusual. Do you want to review your entry?", vbYesNo + vbExclamation, "Review Age") = vbYes Then
+            txtAge.SetFocus
+            Exit Sub
+        End If
+    ElseIf unit = "Months" And age > 24 Then
+        If MsgBox("Are you sure the age is " & age & " months? Usually ages over 24 months are entered in years. Do you want to review your entry?", vbYesNo + vbExclamation, "Review Age") = vbYes Then
+            txtAge.SetFocus
+            Exit Sub
+        End If
+    ElseIf unit = "Days" And age > 28 Then
+        If MsgBox("Are you sure the age is " & age & " days? Usually ages over 28 days are entered in months. Do you want to review your entry?", vbYesNo + vbExclamation, "Review Age") = vbYes Then
+            txtAge.SetFocus
+            Exit Sub
+        End If
+    End If
 
     Dim sex As String
     If optMale.Value Then sex = "M" Else sex = "F"

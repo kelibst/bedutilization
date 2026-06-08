@@ -1467,8 +1467,26 @@ def build_ages_summary_sheet(wb: Workbook, config: WorkbookConfig):
                 ws.cell(row=r, column=sc + col_off).alignment = CENTER
                 ws.cell(row=r, column=sc + col_off).border = THIN_BORDER
 
+        # Uncategorized row
+        uncat_row = 4 + len(config.AGE_GROUPS)
+        ws.cell(row=uncat_row, column=sc, value="Uncategorized").font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc).alignment = CENTER
+        ws.cell(row=uncat_row, column=sc).border = THIN_BORDER
+        
+        base_total = f'COUNTIFS(tblAdmissions[Month],{m},'
+        ws.cell(row=uncat_row, column=sc + 1, value=f'={base_total}tblAdmissions[Sex],"M")-SUM({get_column_letter(sc+1)}4:{get_column_letter(sc+1)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 2, value=f'={base_total}tblAdmissions[Sex],"F")-SUM({get_column_letter(sc+2)}4:{get_column_letter(sc+2)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 3, value=f'={base_total}tblAdmissions[Sex],"M",tblAdmissions[NHIS],"Non-Insured")-SUM({get_column_letter(sc+3)}4:{get_column_letter(sc+3)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 4, value=f'={base_total}tblAdmissions[Sex],"F",tblAdmissions[NHIS],"Non-Insured")-SUM({get_column_letter(sc+4)}4:{get_column_letter(sc+4)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 5, value=f'={base_total}tblAdmissions[Sex],"M",tblAdmissions[NHIS],"Insured")-SUM({get_column_letter(sc+5)}4:{get_column_letter(sc+5)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 6, value=f'={base_total}tblAdmissions[Sex],"F",tblAdmissions[NHIS],"Insured")-SUM({get_column_letter(sc+6)}4:{get_column_letter(sc+6)}{uncat_row-1})').font = NORMAL_FONT
+
+        for col_off in range(1, 7):
+            ws.cell(row=uncat_row, column=sc + col_off).alignment = CENTER
+            ws.cell(row=uncat_row, column=sc + col_off).border = THIN_BORDER
+
         # Total row
-        total_row = 4 + len(config.AGE_GROUPS)
+        total_row = uncat_row + 1
         ws.cell(row=total_row, column=sc, value="Total").font = BOLD_FONT
         ws.cell(row=total_row, column=sc).alignment = CENTER
         ws.cell(row=total_row, column=sc).fill = TOTAL_FILL
@@ -1598,8 +1616,26 @@ def build_deaths_summary_sheet(wb: Workbook, config: WorkbookConfig):
                 ws.cell(row=r, column=sc + col_off).alignment = CENTER
                 ws.cell(row=r, column=sc + col_off).border = THIN_BORDER
 
+        # Uncategorized row
+        uncat_row = 4 + len(config.AGE_GROUPS)
+        ws.cell(row=uncat_row, column=sc, value="Uncategorized").font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc).alignment = CENTER
+        ws.cell(row=uncat_row, column=sc).border = THIN_BORDER
+        
+        base_total = f'COUNTIFS(tblDeaths[Month],{m},'
+        ws.cell(row=uncat_row, column=sc + 1, value=f'={base_total}tblDeaths[Sex],"M")-SUM({get_column_letter(sc+1)}4:{get_column_letter(sc+1)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 2, value=f'={base_total}tblDeaths[Sex],"F")-SUM({get_column_letter(sc+2)}4:{get_column_letter(sc+2)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 3, value=f'={base_total}tblDeaths[Sex],"M",tblDeaths[NHIS],"Non-Insured")-SUM({get_column_letter(sc+3)}4:{get_column_letter(sc+3)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 4, value=f'={base_total}tblDeaths[Sex],"F",tblDeaths[NHIS],"Non-Insured")-SUM({get_column_letter(sc+4)}4:{get_column_letter(sc+4)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 5, value=f'={base_total}tblDeaths[Sex],"M",tblDeaths[NHIS],"Insured")-SUM({get_column_letter(sc+5)}4:{get_column_letter(sc+5)}{uncat_row-1})').font = NORMAL_FONT
+        ws.cell(row=uncat_row, column=sc + 6, value=f'={base_total}tblDeaths[Sex],"F",tblDeaths[NHIS],"Insured")-SUM({get_column_letter(sc+6)}4:{get_column_letter(sc+6)}{uncat_row-1})').font = NORMAL_FONT
+
+        for col_off in range(1, 7):
+            ws.cell(row=uncat_row, column=sc + col_off).alignment = CENTER
+            ws.cell(row=uncat_row, column=sc + col_off).border = THIN_BORDER
+
         # Total row
-        total_row = 4 + len(config.AGE_GROUPS)
+        total_row = uncat_row + 1
         ws.cell(row=total_row, column=sc, value="Total").font = BOLD_FONT
         ws.cell(row=total_row, column=sc).alignment = CENTER
         ws.cell(row=total_row, column=sc).fill = TOTAL_FILL
@@ -1786,6 +1822,147 @@ def build_non_insured_report_sheet(wb: Workbook, config: WorkbookConfig):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# DHIMS SUMMARY SHEET
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def build_dhims_summary_sheet(wb: Workbook, config: WorkbookConfig):
+    ws = wb.create_sheet("DHIMS Summary")
+    ws.sheet_properties.tabColor = "008000"
+
+    ws.merge_cells("A1:L1")
+    c = ws.cell(row=1, column=1, value="LHIMS DHIMS Reports - Statement Of In-Patient (Age/Gender Summary)")
+    c.font = HEADER_FONT
+    c.alignment = CENTER
+
+    # Filters
+    ws.cell(row=2, column=1, value="Select Ward:").font = BOLD_FONT
+    ward_codes = ",".join([w.code for w in config.WARDS])
+    dv_ward = DataValidation(type="list", formula1=f'"{ward_codes},All Wards"', allow_blank=True)
+    ws.add_data_validation(dv_ward)
+    dv_ward.add("B2")
+    ws.cell(row=2, column=2, value="All Wards")
+    ws.cell(row=2, column=2).border = THIN_BORDER
+    ws.cell(row=2, column=2).fill = LIGHT_YELLOW_FILL
+
+    ws.cell(row=3, column=1, value="Select Month:").font = BOLD_FONT
+    dv_month = DataValidation(type="list", formula1='"1,2,3,4,5,6,7,8,9,10,11,12,All Months"', allow_blank=True)
+    ws.add_data_validation(dv_month)
+    dv_month.add("B3")
+    ws.cell(row=3, column=2, value="All Months")
+    ws.cell(row=3, column=2).border = THIN_BORDER
+    ws.cell(row=3, column=2).fill = LIGHT_YELLOW_FILL
+    
+    # Headers
+    ws.merge_cells("C5:F5")
+    c = ws.cell(row=5, column=3, value="INSURED PATIENTS")
+    c.font = HEADER_FONT_WHITE
+    c.fill = HEADER_FILL
+    c.alignment = CENTER
+    
+    ws.merge_cells("G5:J5")
+    c = ws.cell(row=5, column=7, value="NON-INSURED PATIENTS")
+    c.font = HEADER_FONT_WHITE
+    c.fill = HEADER_FILL
+    c.alignment = CENTER
+    
+    ws.merge_cells("C6:D6")
+    ws.cell(row=6, column=3, value="Admission").alignment = CENTER
+    ws.merge_cells("E6:F6")
+    ws.cell(row=6, column=5, value="Death").alignment = CENTER
+    ws.merge_cells("G6:H6")
+    ws.cell(row=6, column=7, value="Admission").alignment = CENTER
+    ws.merge_cells("I6:J6")
+    ws.cell(row=6, column=9, value="Death").alignment = CENTER
+    ws.merge_cells("K6:L6")
+    ws.cell(row=6, column=11, value="Total").alignment = CENTER
+    
+    headers = [
+        "Sr.No.", "Age Groups(Yrs.)",
+        "Male", "Female", "Male", "Female",
+        "Male", "Female", "Male", "Female",
+        "Male", "Female"
+    ]
+    for col, h in enumerate(headers, 1):
+        c = ws.cell(row=7, column=col, value=h)
+        c.font = BOLD_FONT
+        c.alignment = CENTER
+        c.border = THIN_BORDER
+        c.fill = LIGHT_BLUE_FILL
+        
+    for col in range(1, 13):
+        ws.cell(row=6, column=col).border = THIN_BORDER
+        ws.cell(row=6, column=col).font = BOLD_FONT
+        
+    def _dhims_formula(table, age_units, age_mins, age_maxs, sex, nhis):
+        parts = []
+        for i in range(len(age_units)):
+            conds = []
+            conds.append(f'{table}[WardCode], IF($B$2="All Wards", "*", $B$2)')
+            conds.append(f'{table}[Month], IF($B$3="All Months", "<>", $B$3)')
+            conds.append(f'{table}[Sex], "{sex}"')
+            conds.append(f'{table}[NHIS], "{nhis}"')
+            conds.append(f'{table}[AgeUnit], "{age_units[i]}"')
+            if age_mins[i] is not None:
+                conds.append(f'{table}[Age], ">={age_mins[i]}"')
+            if age_maxs[i] is not None:
+                conds.append(f'{table}[Age], "<={age_maxs[i]}"')
+            parts.append(f'COUNTIFS({ ", ".join(conds) })')
+        return "=IFERROR(" + " + ".join(parts) + ", 0)"
+
+    age_groups = [
+        ("0-28 Days", ["Days"], [None], [28]),
+        ("1-11 Months", ["Days", "Months"], [29, None], [None, 11]),
+        ("1-4", ["Months", "Years"], [12, 1], [None, 4]),
+        ("5-9", ["Years"], [5], [9]),
+        ("10-14", ["Years"], [10], [14]),
+        ("15-17", ["Years"], [15], [17]),
+        ("18-19", ["Years"], [18], [19]),
+        ("20-34", ["Years"], [20], [34]),
+        ("35-49", ["Years"], [35], [49]),
+        ("50-59", ["Years"], [50], [59]),
+        ("60-69", ["Years"], [60], [69]),
+        ("70 & Above", ["Years"], [70], [None])
+    ]
+    
+    current_row = 8
+    for idx, (label, units, mins, maxs) in enumerate(age_groups, 1):
+        ws.cell(row=current_row, column=1, value=idx).alignment = CENTER
+        ws.cell(row=current_row, column=2, value=label).font = BOLD_FONT
+        ws.cell(row=current_row, column=3, value=_dhims_formula("tblAdmissions", units, mins, maxs, "M", "Insured"))
+        ws.cell(row=current_row, column=4, value=_dhims_formula("tblAdmissions", units, mins, maxs, "F", "Insured"))
+        ws.cell(row=current_row, column=5, value=_dhims_formula("tblDeaths", units, mins, maxs, "M", "Insured"))
+        ws.cell(row=current_row, column=6, value=_dhims_formula("tblDeaths", units, mins, maxs, "F", "Insured"))
+        ws.cell(row=current_row, column=7, value=_dhims_formula("tblAdmissions", units, mins, maxs, "M", "Non-Insured"))
+        ws.cell(row=current_row, column=8, value=_dhims_formula("tblAdmissions", units, mins, maxs, "F", "Non-Insured"))
+        ws.cell(row=current_row, column=9, value=_dhims_formula("tblDeaths", units, mins, maxs, "M", "Non-Insured"))
+        ws.cell(row=current_row, column=10, value=_dhims_formula("tblDeaths", units, mins, maxs, "F", "Non-Insured"))
+        
+        r = current_row
+        ws.cell(row=r, column=11, value=f'=C{r}+E{r}+G{r}+I{r}')
+        ws.cell(row=r, column=12, value=f'=D{r}+F{r}+H{r}+J{r}')
+        
+        for c in range(1, 13):
+            ws.cell(row=r, column=c).border = THIN_BORDER
+        
+        current_row += 1
+        
+    ws.cell(row=current_row, column=1, value="")
+    ws.cell(row=current_row, column=2, value="TOTAL").font = BOLD_FONT
+    for c in range(3, 13):
+        col_let = get_column_letter(c)
+        ws.cell(row=current_row, column=c, value=f'=SUM({col_let}8:{col_let}{current_row-1})').font = BOLD_FONT
+        ws.cell(row=current_row, column=c).fill = TOTAL_FILL
+        ws.cell(row=current_row, column=c).border = THIN_BORDER
+    ws.cell(row=current_row, column=1).border = THIN_BORDER
+    ws.cell(row=current_row, column=2).border = THIN_BORDER
+    
+    ws.column_dimensions["A"].width = 8
+    ws.column_dimensions["B"].width = 18
+    for i in range(3, 13):
+        ws.column_dimensions[get_column_letter(i)].width = 10
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # MAIN BUILD FUNCTION
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -1828,6 +2005,9 @@ def build_structure(config: WorkbookConfig, output_path: str):
     
     # 8. Statement of Inpatient
     build_statement_of_inpatient_sheet(wb, config)
+    
+    # 8b. DHIMS Summary
+    build_dhims_summary_sheet(wb, config)
     
     # 9. Non-Insured Report
     build_non_insured_report_sheet(wb, config)

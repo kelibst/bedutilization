@@ -61,4 +61,6 @@ def create_nav_buttons(wb: Any) -> None:
     add_sheet_button(ws, "btnRecalcAll", "Control!A33:C33", "RecalculateAllRows")
     add_sheet_button(ws, "btnVerify", "Control!A35:C35", "VerifyCalculations")
     add_sheet_button(ws, "btnToggleProtection", "Control!A37:C37", "ToggleDataProtection")
-    # Note: "Fix Date Formats" button removed - date formats now initialized automatically during build
+    
+    ws.Range("A39").Value = "Clean Data (Fix Ages)"
+    add_sheet_button(ws, "btnFixAges", "Control!A39:C39", "ShowAgeFixer")

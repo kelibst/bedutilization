@@ -810,3 +810,53 @@ def create_validate_ward_form(vbproj: Any) -> None:
     # ── Inject VBA code ───────────────────────────────────────────────────────
     code_path = get_vba_path("frmValidateWard.vba", "forms")
     form.CodeModule.AddFromString(read_vba_file(code_path))
+
+def create_age_fixer_form(vbproj: Any) -> None:
+    """
+    Create the frmAgeFixer UserForm programmatically.
+    """
+    form = vbproj.VBComponents.Add(3)  # vbext_ct_MSForm
+    form.Name = "frmAgeFixer"
+    form.Properties("Caption").Value = "Age Anomaly Fixer"
+    form.Properties("Width").Value = 460
+    form.Properties("Height").Value = 350
+
+    d = form.Designer
+
+    y = 12
+
+    # Title label
+    lbl = add_label(d, "lblTitle", "Anomalous Age Entries:", 12, y, 200, 18)
+    lbl.Font.Bold = True
+    
+    # Refresh Button
+    add_button(d, "btnRefresh", "Refresh Scan", 330, y, 90, 20)
+    y += 24
+    
+    # ListBox
+    add_listbox(d, "lstAnomalies", 12, y, 410, 150)
+    y += 160
+    
+    # Correction Area
+    add_label(d, "lblCorrection", "Suggested Correction:", 12, y, 150, 18)
+    lblCorrection = d.Controls("lblCorrection")
+    lblCorrection.Font.Bold = True
+    y += 24
+    
+    add_label(d, "lblNewAge", "New Age:", 12, y, 60, 18)
+    add_textbox(d, "txtNewAge", 80, y, 50, 20)
+    
+    add_label(d, "lblNewUnit", "New Unit:", 150, y, 60, 18)
+    add_combobox(d, "cmbNewUnit", 210, y, 80, 20)
+    
+    add_button(d, "btnApply", "Apply Suggestion", 310, y, 110, 22)
+    y += 40
+    
+    # Status
+    lblStatus = add_label(d, "lblStatus", "Ready", 12, y, 300, 18)
+    lblStatus.ForeColor = 0x808080
+    add_button(d, "btnClose", "Close", 360, y, 60, 24)
+
+    # Inject VBA code
+    code_path = get_vba_path("frmAgeFixer.vba", "forms")
+    form.CodeModule.AddFromString(read_vba_file(code_path))

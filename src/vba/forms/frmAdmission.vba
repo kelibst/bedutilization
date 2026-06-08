@@ -302,8 +302,31 @@ Private Function SaveAdmissionEntry() As Boolean
     End If
 
     If Trim(txtAge.Value) = "" Or Not IsNumeric(txtAge.Value) Then
-        MsgBox "Please enter a valid age.", vbExclamation
+        MsgBox "Please enter a valid numeric age.", vbExclamation
         Exit Function
+    End If
+
+    Dim ageVal As Long
+    ageVal = CLng(txtAge.Value)
+    Dim unitVal As String
+    unitVal = cmbAgeUnit.Value
+    
+    ' Validate Age anomalies
+    If unitVal = "Years" And (ageVal > 110 Or ageVal = 0) Then
+        If MsgBox("Are you sure the age is " & ageVal & " years? This seems unusual. Do you want to review your entry?", vbYesNo + vbExclamation, "Review Age") = vbYes Then
+            txtAge.SetFocus
+            Exit Function
+        End If
+    ElseIf unitVal = "Months" And ageVal > 24 Then
+        If MsgBox("Are you sure the age is " & ageVal & " months? Usually ages over 24 months are entered in years. Do you want to review your entry?", vbYesNo + vbExclamation, "Review Age") = vbYes Then
+            txtAge.SetFocus
+            Exit Function
+        End If
+    ElseIf unitVal = "Days" And ageVal > 28 Then
+        If MsgBox("Are you sure the age is " & ageVal & " days? Usually ages over 28 days are entered in months. Do you want to review your entry?", vbYesNo + vbExclamation, "Review Age") = vbYes Then
+            txtAge.SetFocus
+            Exit Function
+        End If
     End If
 
     Dim sex As String

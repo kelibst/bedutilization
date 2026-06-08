@@ -40,3 +40,7 @@ End Sub
 Public Sub ExportWardConfig()
     ExportWardsConfig
 End Sub
+
+Public Sub ShowAgeFixer()
+    frmAgeFixer.Show
+End Sub
