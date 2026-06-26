@@ -87,6 +87,11 @@ Private Sub ToggleEmergencyControls(showCombined As Boolean)
 End Sub
 
 Private Sub UserForm_Initialize()
+    ' Self-heal: if a previous operation left Excel frozen (ScreenUpdating /
+    ' EnableEvents off, Calculation manual), restore it so this form is responsive
+    ' and saves recalculate/persist normally.
+    RestoreAppState
+
     isLoading = True
     isDirty = False
 

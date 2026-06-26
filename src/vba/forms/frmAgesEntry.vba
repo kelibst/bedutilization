@@ -139,21 +139,27 @@ Private Sub UpdateRecentList(Optional filterDate As Variant)
         End If
     End If
 
+    ' Read the whole table ONCE into a variant array to avoid per-cell COM calls.
+    Dim rowCount As Long
+    rowCount = tbl.ListRows.Count
+    Dim rData As Variant
+    If rowCount > 0 Then rData = ReadTableData(tbl)
+
     ' Check if filtering by date or showing all (last 10)
     If Not IsMissing(filterDate) And Not IsEmpty(filterDate) Then
         ' Filter mode: Show ALL entries matching the selected date AND ward
-        For i = 1 To tbl.ListRows.Count
-            rowDateVal = tbl.ListRows(i).Range(1, COL_ADM_DATE).Value
+        For i = 1 To rowCount
+            rowDateVal = rData(i, COL_ADM_DATE)
             If Not IsEmpty(rowDateVal) And rowDateVal <> "" And IsDate(rowDateVal) Then
-                rowWardVal = Trim(CStr(tbl.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value))
+                rowWardVal = Trim(CStr(rData(i, COL_ADM_WARD_CODE)))
                 If DateValue(CDate(rowDateVal)) = DateValue(filterDate) And _
                    (wc = "" Or rowWardVal = wc) Then
                     lstRecent.AddItem Format(CDate(rowDateVal), "dd/mm/yyyy") & " | " & _
                         rowWardVal & " | " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_AGE).Value & " " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_AGE_UNIT).Value & " | " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_SEX).Value & " | " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_NHIS).Value
+                        rData(i, COL_ADM_AGE) & " " & _
+                        rData(i, COL_ADM_AGE_UNIT) & " | " & _
+                        rData(i, COL_ADM_SEX) & " | " & _
+                        rData(i, COL_ADM_NHIS)
                     ReDim Preserve recentRowIndices(displayCount)
                     recentRowIndices(displayCount) = i
                     displayCount = displayCount + 1
@@ -166,20 +172,20 @@ Private Sub UpdateRecentList(Optional filterDate As Variant)
     Else
         ' Default mode: Show last 10 entries for the selected ward
         Dim startRow As Long
-        startRow = tbl.ListRows.Count - 9
+        startRow = rowCount - 9
         If startRow < 1 Then startRow = 1
 
-        For i = startRow To tbl.ListRows.Count
-            rowDateVal = tbl.ListRows(i).Range(1, COL_ADM_DATE).Value
+        For i = startRow To rowCount
+            rowDateVal = rData(i, COL_ADM_DATE)
             If Not IsEmpty(rowDateVal) And rowDateVal <> "" And IsDate(rowDateVal) Then
-                rowWardVal = Trim(CStr(tbl.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value))
+                rowWardVal = Trim(CStr(rData(i, COL_ADM_WARD_CODE)))
                 If wc = "" Or rowWardVal = wc Then
                     lstRecent.AddItem Format(CDate(rowDateVal), "dd/mm/yyyy") & " | " & _
                         rowWardVal & " | " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_AGE).Value & " " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_AGE_UNIT).Value & " | " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_SEX).Value & " | " & _
-                        tbl.ListRows(i).Range(1, COL_ADM_NHIS).Value
+                        rData(i, COL_ADM_AGE) & " " & _
+                        rData(i, COL_ADM_AGE_UNIT) & " | " & _
+                        rData(i, COL_ADM_SEX) & " | " & _
+                        rData(i, COL_ADM_NHIS)
                     ReDim Preserve recentRowIndices(displayCount)
                     recentRowIndices(displayCount) = i
                     displayCount = displayCount + 1
@@ -652,12 +658,21 @@ End Sub
 ' Show age entry count vs daily admission record for the selected date AND ward
 '==============================================================================
 Private Sub UpdateAdmissionTotals(filterDate As Date)
-    On Error Resume Next
+    On Error GoTo CleanFail
+
+    ' Save Excel state and disable updates/events for performance.
+    ' Restored in CleanFail / at the end (mirrors heavy routines elsewhere).
+    Dim prevScreen As Boolean
+    Dim prevEvents As Boolean
+    prevScreen = Application.ScreenUpdating
+    prevEvents = Application.EnableEvents
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
 
     If cmbWard.ListIndex < 0 Then
         lblAdmTotal.Caption = "Select a ward to see totals"
         lblAdmTotal.ForeColor = RGB(128, 128, 128)
-        Exit Sub
+        GoTo CleanExit
     End If
 
     Dim wc As String
@@ -677,35 +692,49 @@ Private Sub UpdateAdmissionTotals(filterDate As Date)
     Dim i As Long
     Dim rowDate As Variant
 
-    ' Count age entries for this ward + date
+    ' Count age entries for this ward + date.
+    ' Read the whole table ONCE into a variant array to avoid per-cell COM calls.
     Dim ageEntries As Long
     ageEntries = 0
-    For i = 1 To tblAdm.ListRows.Count
-        rowDate = tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value
-        If Not IsEmpty(rowDate) And IsDate(rowDate) Then
-            If DateValue(CDate(rowDate)) = DateValue(filterDate) And _
-               Trim(CStr(tblAdm.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value)) = wc Then
-                ageEntries = ageEntries + 1
+    Dim aRows As Long
+    aRows = tblAdm.ListRows.Count
+    If aRows > 0 Then
+        Dim aData As Variant
+        aData = ReadTableData(tblAdm)
+        For i = 1 To aRows
+            rowDate = aData(i, COL_ADM_DATE)
+            If Not IsEmpty(rowDate) And IsDate(rowDate) Then
+                If DateValue(CDate(rowDate)) = DateValue(filterDate) And _
+                   Trim(CStr(aData(i, COL_ADM_WARD_CODE))) = wc Then
+                    ageEntries = ageEntries + 1
+                End If
             End If
-        End If
-    Next i
+        Next i
+    End If
 
-    ' Get daily admission total for this ward + date
+    ' Get daily admission total for this ward + date.
+    ' Read the whole table ONCE into a variant array.
     Dim dailyTotal As Long
     Dim hasDailyRecord As Boolean
     dailyTotal = 0
     hasDailyRecord = False
-    For i = 1 To tblDay.ListRows.Count
-        rowDate = tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
-        If Not IsEmpty(rowDate) And IsDate(rowDate) Then
-            If DateValue(CDate(rowDate)) = DateValue(filterDate) And _
-               Trim(CStr(tblDay.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value)) = wc Then
-                dailyTotal = CLng(Val(tblDay.ListRows(i).Range(1, COL_DAILY_ADMISSIONS).Value))
-                hasDailyRecord = True
-                Exit For
+    Dim dRows As Long
+    dRows = tblDay.ListRows.Count
+    If dRows > 0 Then
+        Dim dData As Variant
+        dData = ReadTableData(tblDay)
+        For i = 1 To dRows
+            rowDate = dData(i, COL_DAILY_ENTRY_DATE)
+            If Not IsEmpty(rowDate) And IsDate(rowDate) Then
+                If DateValue(CDate(rowDate)) = DateValue(filterDate) And _
+                   Trim(CStr(dData(i, COL_DAILY_WARD_CODE))) = wc Then
+                    dailyTotal = CLng(Val(dData(i, COL_DAILY_ADMISSIONS)))
+                    hasDailyRecord = True
+                    Exit For
+                End If
             End If
-        End If
-    Next i
+        Next i
+    End If
 
     Dim dailyStr As String
     If hasDailyRecord Then dailyStr = CStr(dailyTotal) Else dailyStr = Chr(8212)  ' em dash
@@ -720,7 +749,43 @@ Private Sub UpdateAdmissionTotals(filterDate As Date)
     Else
         lblAdmTotal.ForeColor = RGB(128, 128, 128) ' Gray: no daily record yet
     End If
+
+CleanExit:
+    Application.ScreenUpdating = prevScreen
+    Application.EnableEvents = prevEvents
+    Exit Sub
+
+CleanFail:
+    ' Always restore Excel state even if an error occurs
+    Application.ScreenUpdating = prevScreen
+    Application.EnableEvents = prevEvents
 End Sub
+
+'==============================================================================
+' Helper: read an entire table's DataBodyRange into a 1-based 2D variant array.
+' Excel returns a scalar/1D shape for a single-row table; this normalizes it so
+' callers can always index d(rowIndex, columnIndex). Caller must ensure the
+' table has at least one data row before calling (ListRows.Count > 0).
+'==============================================================================
+Private Function ReadTableData(tbl As ListObject) As Variant
+    If tbl.ListRows.Count = 1 Then
+        ' Single data row: .Value may not be a 2D array. Read the row's cells
+        ' directly into a 1-based (1 x nCols) array to keep indexing uniform.
+        Dim nCols As Long
+        nCols = tbl.ListColumns.Count
+        Dim arr() As Variant
+        ReDim arr(1 To 1, 1 To nCols)
+        Dim rng As Range
+        Set rng = tbl.ListRows(1).Range
+        Dim c As Long
+        For c = 1 To nCols
+            arr(1, c) = rng.Cells(1, c).Value
+        Next c
+        ReadTableData = arr
+    Else
+        ReadTableData = tbl.DataBodyRange.Value
+    End If
+End Function
 
 '==============================================================================
 ' Validate Month: 3-check monthly validation for the selected month/ward
@@ -763,6 +828,18 @@ Private Sub btnValidate_Click()
     Set tblAdm = ThisWorkbook.Sheets("Admissions").ListObjects("tblAdmissions")
     Set tblDay = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
 
+    ' Read both tables ONCE into variant arrays. The validation loops below only
+    ' read cell values (no writes), so array snapshots produce identical results
+    ' while replacing O(days x wards x rows) per-cell COM round-trips.
+    Dim admRowCount As Long
+    Dim dayRowCount As Long
+    admRowCount = tblAdm.ListRows.Count
+    dayRowCount = tblDay.ListRows.Count
+    Dim admData As Variant
+    Dim dayData As Variant
+    If admRowCount > 0 Then admData = ReadTableData(tblAdm)
+    If dayRowCount > 0 Then dayData = ReadTableData(tblDay)
+
     Dim wards() As String
     wards = GetWardCodes()
 
@@ -798,12 +875,12 @@ Private Sub btnValidate_Click()
             monthlyDaily = 0
             Dim wardHasDaily As Boolean
             wardHasDaily = False
-            For i = 1 To tblDay.ListRows.Count
-                vRowDate = tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
+            For i = 1 To dayRowCount
+                vRowDate = dayData(i, COL_DAILY_ENTRY_DATE)
                 If IsDate(vRowDate) Then
                     If Month(CDate(vRowDate)) = monthIdx And Year(CDate(vRowDate)) = yearIdx And _
-                       Trim(CStr(tblDay.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value)) = vWc Then
-                        monthlyDaily = monthlyDaily + CLng(Val(tblDay.ListRows(i).Range(1, COL_DAILY_ADMISSIONS).Value))
+                       Trim(CStr(dayData(i, COL_DAILY_WARD_CODE))) = vWc Then
+                        monthlyDaily = monthlyDaily + CLng(Val(dayData(i, COL_DAILY_ADMISSIONS)))
                         wardHasDaily = True
                     End If
                 End If
@@ -812,11 +889,11 @@ Private Sub btnValidate_Click()
             ' Count age entries for this ward across the month
             Dim monthlyEntries As Long
             monthlyEntries = 0
-            For i = 1 To tblAdm.ListRows.Count
-                vRowDate = tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value
+            For i = 1 To admRowCount
+                vRowDate = admData(i, COL_ADM_DATE)
                 If IsDate(vRowDate) Then
                     If Month(CDate(vRowDate)) = monthIdx And Year(CDate(vRowDate)) = yearIdx And _
-                       Trim(CStr(tblAdm.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value)) = vWc Then
+                       Trim(CStr(admData(i, COL_ADM_WARD_CODE))) = vWc Then
                         monthlyEntries = monthlyEntries + 1
                     End If
                 End If
@@ -875,13 +952,13 @@ Private Sub btnValidate_Click()
 
         ' Sum daily admissions for this day (filtered by ward)
         dayDailyTotal = 0
-        For i = 1 To tblDay.ListRows.Count
-            vDayDate = tblDay.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
+        For i = 1 To dayRowCount
+            vDayDate = dayData(i, COL_DAILY_ENTRY_DATE)
             If IsDate(vDayDate) Then
                 If DateValue(CDate(vDayDate)) = DateValue(checkDate) Then
-                    vDayWard = Trim(CStr(tblDay.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value))
+                    vDayWard = Trim(CStr(dayData(i, COL_DAILY_WARD_CODE)))
                     If selectedWard = "" Or vDayWard = selectedWard Then
-                        dayDailyTotal = dayDailyTotal + CLng(Val(tblDay.ListRows(i).Range(1, COL_DAILY_ADMISSIONS).Value))
+                        dayDailyTotal = dayDailyTotal + CLng(Val(dayData(i, COL_DAILY_ADMISSIONS)))
                     End If
                 End If
             End If
@@ -890,11 +967,11 @@ Private Sub btnValidate_Click()
         If dayDailyTotal > 0 Then
             ' Count age entries for this day (filtered by ward)
             dayEntryCount = 0
-            For i = 1 To tblAdm.ListRows.Count
-                vDayDate = tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value
+            For i = 1 To admRowCount
+                vDayDate = admData(i, COL_ADM_DATE)
                 If IsDate(vDayDate) Then
                     If DateValue(CDate(vDayDate)) = DateValue(checkDate) Then
-                        If selectedWard = "" Or Trim(CStr(tblAdm.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value)) = selectedWard Then
+                        If selectedWard = "" Or Trim(CStr(admData(i, COL_ADM_WARD_CODE))) = selectedWard Then
                             dayEntryCount = dayEntryCount + 1
                         End If
                     End If
@@ -925,14 +1002,14 @@ Private Sub btnValidate_Click()
     Dim anomAgeUnit As String
     Dim anomMsg As String
 
-    For i = 1 To tblAdm.ListRows.Count
-        vAnomDate = tblAdm.ListRows(i).Range(1, COL_ADM_DATE).Value
+    For i = 1 To admRowCount
+        vAnomDate = admData(i, COL_ADM_DATE)
         If IsDate(vAnomDate) Then
             If Month(CDate(vAnomDate)) = monthIdx And Year(CDate(vAnomDate)) = yearIdx Then
-                vAnomWard = Trim(CStr(tblAdm.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value))
+                vAnomWard = Trim(CStr(admData(i, COL_ADM_WARD_CODE)))
                 If selectedWard = "" Or vAnomWard = selectedWard Then
-                    anomAgeVal = CLng(Val(tblAdm.ListRows(i).Range(1, COL_ADM_AGE).Value))
-                    anomAgeUnit = CStr(tblAdm.ListRows(i).Range(1, COL_ADM_AGE_UNIT).Value)
+                    anomAgeVal = CLng(Val(admData(i, COL_ADM_AGE)))
+                    anomAgeUnit = CStr(admData(i, COL_ADM_AGE_UNIT))
                     anomMsg = ""
 
                     If anomAgeUnit = "Years" Then

@@ -5,6 +5,10 @@ Private wardNames As Variant
 Private editingRowIndex As Long  ' 0 = new entry, >0 = editing specific row
 
 Private Sub UserForm_Initialize()
+    ' Self-heal: if a previous operation left Excel frozen (ScreenUpdating /
+    ' EnableEvents off, Calculation manual), restore it so this form is responsive
+    ' and saves recalculate/persist normally.
+    RestoreAppState
     editingRowIndex = 0  ' Start in new entry mode
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()

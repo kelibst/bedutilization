@@ -28,18 +28,28 @@ Public Function CountIndividualAdmissions(entryDate As Date, wardCode As String)
     Dim count As Long
     count = 0
 
+    ' Read the whole table once into an in-memory array (1 COM call) instead of
+    ' reading cell-by-cell. This is dramatically faster as the table grows.
+    If tbl.DataBodyRange Is Nothing Then
+        CountIndividualAdmissions = 0
+        Exit Function
+    End If
+
+    Dim data As Variant
+    data = tbl.DataBodyRange.Value
+
+    Dim targetSerial As Long
+    targetSerial = Int(CDbl(entryDate))  ' date without time component
+
     Dim i As Long
-    For i = 1 To tbl.ListRows.count
+    For i = 1 To UBound(data, 1)
         Dim rowDate As Variant
-        rowDate = tbl.ListRows(i).Range(1, COL_ADM_DATE).Value
+        rowDate = data(i, COL_ADM_DATE)
 
         If IsDate(rowDate) Then
-            Dim rowWard As String
-            rowWard = Trim(CStr(tbl.ListRows(i).Range(1, COL_ADM_WARD_CODE).Value))
-
-            ' Compare dates using DateValue to ignore time component
-            If DateValue(CDate(rowDate)) = DateValue(entryDate) And _
-               rowWard = wardCode Then
+            ' Compare date serials to ignore time component
+            If Int(CDbl(CDate(rowDate))) = targetSerial And _
+               Trim(CStr(data(i, COL_ADM_WARD_CODE))) = wardCode Then
                 count = count + 1
             End If
         End If
@@ -72,20 +82,29 @@ Public Function GetDailyAdmissionTotal(entryDate As Date, wardCode As String) As
     Dim tbl As ListObject
     Set tbl = ThisWorkbook.Sheets("DailyData").ListObjects("tblDaily")
 
+    ' Read the whole table once into an in-memory array (1 COM call).
+    If tbl.DataBodyRange Is Nothing Then
+        GetDailyAdmissionTotal = Empty
+        Exit Function
+    End If
+
+    Dim data As Variant
+    data = tbl.DataBodyRange.Value
+
+    Dim targetSerial As Long
+    targetSerial = Int(CDbl(entryDate))
+
     Dim i As Long
-    For i = 1 To tbl.ListRows.count
+    For i = 1 To UBound(data, 1)
         Dim rowDate As Variant
-        rowDate = tbl.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
+        rowDate = data(i, COL_DAILY_ENTRY_DATE)
 
         If IsDate(rowDate) Then
-            Dim rowWard As String
-            rowWard = Trim(CStr(tbl.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value))
-
-            ' Compare dates using DateValue to ignore time component
-            If DateValue(CDate(rowDate)) = DateValue(entryDate) And _
-               rowWard = wardCode Then
+            ' Compare date serials to ignore time component
+            If Int(CDbl(CDate(rowDate))) = targetSerial And _
+               Trim(CStr(data(i, COL_DAILY_WARD_CODE))) = wardCode Then
                 ' Found matching entry - return admission count
-                GetDailyAdmissionTotal = CLng(tbl.ListRows(i).Range(1, COL_DAILY_ADMISSIONS).Value)
+                GetDailyAdmissionTotal = CLng(data(i, COL_DAILY_ADMISSIONS))
                 Exit Function
             End If
         End If

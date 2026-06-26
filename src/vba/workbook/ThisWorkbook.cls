@@ -3,18 +3,24 @@ Private Sub Workbook_Open()
     On Error Resume Next
     ThisWorkbook.Sheets("Control").Activate
 
-    ' Hide data sheets
-    ThisWorkbook.Sheets("DailyData").Visible = xlSheetHidden
-    ThisWorkbook.Sheets("Admissions").Visible = xlSheetHidden
-    ThisWorkbook.Sheets("DeathsData").Visible = xlSheetHidden
-    ThisWorkbook.Sheets("TransfersData").Visible = xlSheetHidden
+    ' Hide data sheets (VeryHidden so they cannot be reached via right-click > Unhide)
+    ThisWorkbook.Sheets("DailyData").Visible = xlSheetVeryHidden
+    ThisWorkbook.Sheets("Admissions").Visible = xlSheetVeryHidden
+    ThisWorkbook.Sheets("DeathsData").Visible = xlSheetVeryHidden
+    ThisWorkbook.Sheets("TransfersData").Visible = xlSheetVeryHidden
 
     ' Hide individual emergency sheets by default (added 2026-02)
-    ThisWorkbook.Sheets("Male Emergency").Visible = xlSheetHidden
-    ThisWorkbook.Sheets("Female Emergency").Visible = xlSheetHidden
+    ThisWorkbook.Sheets("Male Emergency").Visible = xlSheetVeryHidden
+    ThisWorkbook.Sheets("Female Emergency").Visible = xlSheetVeryHidden
 
     ' Re-apply sheet protection (UserInterfaceOnly is lost on close/reopen)
     ApplySheetProtection
+
+    ' Normalize data integrity (fill missing IDs / recalc) - safe & idempotent.
+    ' Wrapped so any failure here can never block the workbook from opening.
+    On Error Resume Next
+    NormalizeDataIntegrity
+    On Error GoTo 0
 End Sub
 
 '==============================================================================

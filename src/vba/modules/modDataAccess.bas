@@ -166,7 +166,9 @@ Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) 
         End If
     End If
 
-    ' Scan backward through ALL rows - no premature exits
+    ' PERF: read the whole table once into a VBA array instead of per-cell access.
+    ' Semantics preserved: full scan (no early exit), keep the row with the LATEST
+    ' EntryDate strictly before beforeDate for this ward; fall back to prev-year.
     Dim foundRemaining As Long
     Dim foundDate As Date
     Dim hasMatch As Boolean
@@ -175,26 +177,40 @@ Public Function GetLastRemainingForWard(wardCode As String, beforeDate As Date) 
     hasMatch = False
 
     Dim i As Long
-    For i = tbl.ListRows.Count To 1 Step -1
-        Dim rowWard As String
-        Dim rowDate As Variant
+    Dim rowWard As String
+    Dim rowDate As Variant
+    Dim currentDate As Date
 
-        rowWard = tbl.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value
-        rowDate = tbl.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
-
+    If tbl.ListRows.Count = 1 Then
+        ' Single-row DataBodyRange: .Value is NOT a 2-D array, so read the row directly.
+        rowWard = tbl.ListRows(1).Range(1, COL_DAILY_WARD_CODE).Value
+        rowDate = tbl.ListRows(1).Range(1, COL_DAILY_ENTRY_DATE).Value
         If rowWard = wardCode And IsDate(rowDate) Then
-            Dim currentDate As Date
             currentDate = CDate(rowDate)
             If currentDate < beforeDate Then
-                ' Found a matching prior entry - keep track of most recent
-                If currentDate > foundDate Then
-                    foundDate = currentDate
-                    foundRemaining = CLng(tbl.ListRows(i).Range(1, COL_DAILY_REMAINING).Value)
-                    hasMatch = True
-                End If
+                foundRemaining = CLng(tbl.ListRows(1).Range(1, COL_DAILY_REMAINING).Value)
+                hasMatch = True
             End If
         End If
-    Next i
+    Else
+        Dim d As Variant
+        d = tbl.DataBodyRange.Value
+        For i = 1 To UBound(d, 1)
+            rowWard = CStr(d(i, COL_DAILY_WARD_CODE))
+            rowDate = d(i, COL_DAILY_ENTRY_DATE)
+            If rowWard = wardCode And IsDate(rowDate) Then
+                currentDate = CDate(rowDate)
+                If currentDate < beforeDate Then
+                    ' Keep the most recent prior entry (strictly later wins; ties keep first seen)
+                    If currentDate > foundDate Then
+                        foundDate = currentDate
+                        foundRemaining = CLng(d(i, COL_DAILY_REMAINING))
+                        hasMatch = True
+                    End If
+                End If
+            End If
+        Next i
+    End If
 
     ' Return the most recent match, or PrevYearRemaining if no match
     If hasMatch Then
@@ -243,18 +259,35 @@ Public Function CheckDuplicateDaily(entryDate As Date, wardCode As String) As Lo
     Dim tbl As ListObject
     Set tbl = ws.ListObjects("tblDaily")
 
+    ' PERF: single array read instead of per-cell access. Returns the (1-based)
+    ' table row index of the FIRST ward+date match, 0 if none - same as before.
     Dim i As Long
-    For i = 1 To tbl.ListRows.Count
-        Dim rowDate As Variant
-        rowDate = tbl.ListRows(i).Range(1, COL_DAILY_ENTRY_DATE).Value
+    Dim rowDate As Variant
+
+    If tbl.ListRows.Count = 1 Then
+        ' Single-row DataBodyRange is not a 2-D array; read the row directly.
+        rowDate = tbl.ListRows(1).Range(1, COL_DAILY_ENTRY_DATE).Value
         If IsDate(rowDate) Then
             If CDate(rowDate) = entryDate And _
-               tbl.ListRows(i).Range(1, COL_DAILY_WARD_CODE).Value = wardCode Then
-                CheckDuplicateDaily = i
+               tbl.ListRows(1).Range(1, COL_DAILY_WARD_CODE).Value = wardCode Then
+                CheckDuplicateDaily = 1
                 Exit Function
             End If
         End If
-    Next i
+    Else
+        Dim d As Variant
+        d = tbl.DataBodyRange.Value
+        For i = 1 To UBound(d, 1)
+            rowDate = d(i, COL_DAILY_ENTRY_DATE)
+            If IsDate(rowDate) Then
+                If CDate(rowDate) = entryDate And _
+                   CStr(d(i, COL_DAILY_WARD_CODE)) = wardCode Then
+                    CheckDuplicateDaily = i
+                    Exit Function
+                End If
+            End If
+        Next i
+    End If
     CheckDuplicateDaily = 0
 End Function
 
@@ -302,6 +335,10 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
     deathsU24 As Long, transIn As Long, transOut As Long)
 
     ' PERFORMANCE OPTIMIZATIONS
+    ' NOTE: error handler below GUARANTEES these are restored even on failure.
+    ' Without it, an error here freezes Excel (UI hang, edits stop recalculating)
+    ' for the rest of the session.
+    On Error GoTo CleanFail
     Application.EnableEvents = False        ' Prevent event recursion
     Application.ScreenUpdating = False      ' 50-80% faster
     Application.Calculation = xlCalculationManual  ' No mid-save recalcs
@@ -376,6 +413,14 @@ Public Sub SaveDailyEntry(entryDate As Date, wardCode As String, _
     Application.Calculate  ' Force ward sheets to update
     Application.ScreenUpdating = True
     Application.EnableEvents = True
+    Exit Sub
+
+CleanFail:
+    ' Always restore Excel to a usable state, then report
+    Dim savedDesc As String
+    savedDesc = Err.Description
+    RestoreAppState
+    MsgBox "Error saving daily entry: " & savedDesc, vbCritical, "Save Error"
 End Sub
 
 Public Sub RecalculateRow(tbl As ListObject, rowIndex As Long)
@@ -394,10 +439,19 @@ Public Sub RecalculateRow(tbl As ListObject, rowIndex As Long)
 End Sub
 
 Public Sub RecalculateSubsequentRows(tbl As ListObject, startRowIndex As Long, wardCode As String)
-    ' OPTIMIZED: Early exit when different ward encountered
+    ' PERF: carry the running "Remaining" forward across the sorted same-ward block
+    ' instead of calling CalculateRemainingForRow (full backward scan) per row,
+    ' which was O(rows^2). The table is sorted by WardCode then EntryDate, so the
+    ' Remaining of startRowIndex is the correct PrevRemaining for the next same-ward
+    ' row, and each row feeds the next. Same end state as before.
     On Error Resume Next
 
+    If startRowIndex < 1 Then Exit Sub
     If startRowIndex >= tbl.ListRows.Count Then Exit Sub
+
+    ' Seed the running remaining from the start row's already-calculated Remaining.
+    Dim lastRem As Long
+    lastRem = CLng(Val(tbl.ListRows(startRowIndex).Range.Cells(1, COL_DAILY_REMAINING).Value))
 
     Dim i As Long
     Dim processedCount As Long
@@ -405,11 +459,24 @@ Public Sub RecalculateSubsequentRows(tbl As ListObject, startRowIndex As Long, w
 
     For i = startRowIndex + 1 To tbl.ListRows.Count
         Dim rowWard As String
-        rowWard = tbl.ListRows(i).Range.Cells(1, 3).Value
+        rowWard = tbl.ListRows(i).Range.Cells(1, COL_DAILY_WARD_CODE).Value
 
         If rowWard = wardCode Then
-            ' Same ward - recalculate
-            CalculateRemainingForRow tbl.ListRows(i)
+            ' Same ward - carry remaining forward (no backward scan)
+            Dim rAdm As Long, rDis As Long, rDth As Long
+            Dim rD24 As Long, rTi As Long, rTo As Long
+            With tbl.ListRows(i).Range
+                rAdm = CLng(Val(.Cells(1, COL_DAILY_ADMISSIONS).Value))
+                rDis = CLng(Val(.Cells(1, COL_DAILY_DISCHARGES).Value))
+                rDth = CLng(Val(.Cells(1, COL_DAILY_DEATHS).Value))
+                rD24 = CLng(Val(.Cells(1, COL_DAILY_DEATHS_U24).Value))
+                rTi = CLng(Val(.Cells(1, COL_DAILY_TRANSFERS_IN).Value))
+                rTo = CLng(Val(.Cells(1, COL_DAILY_TRANSFERS_OUT).Value))
+
+                .Cells(1, COL_DAILY_PREV_REMAINING).Value = lastRem
+                lastRem = lastRem + rAdm + rTi - rDis - rDth - rTo - rD24
+                .Cells(1, COL_DAILY_REMAINING).Value = lastRem
+            End With
             processedCount = processedCount + 1
         ElseIf processedCount > 0 Then
             ' Different ward & we've already processed some rows
@@ -455,6 +522,7 @@ End Sub
 
 Public Sub RecalculateAllRows()
     ' Manual recalculation of all rows - useful for testing
+    On Error GoTo CleanFail
     Application.EnableEvents = False
     Application.ScreenUpdating = False
     Application.Calculation = xlCalculationManual
@@ -481,6 +549,13 @@ Public Sub RecalculateAllRows()
     Application.EnableEvents = True
 
     MsgBox "Recalculated " & tbl.ListRows.Count & " rows", vbInformation
+    Exit Sub
+
+CleanFail:
+    Dim savedDesc As String
+    savedDesc = Err.Description
+    RestoreAppState
+    MsgBox "Error during recalculation: " & savedDesc, vbCritical, "Recalculation Error"
 End Sub
 
 Public Sub VerifyCalculations()
@@ -676,6 +751,9 @@ Public Sub ImportFromOldWorkbook()
 
     On Error GoTo ErrorHandler
 
+    Dim oldFileName As String
+    Dim wbCheck As Workbook
+
     ' Prompt user to select old workbook
     Dim fd As FileDialog
     Set fd = Application.FileDialog(msoFileDialogFilePicker)
@@ -708,6 +786,29 @@ Public Sub ImportFromOldWorkbook()
     ThisWorkbook.Sheets("DeathsData").Unprotect
     ThisWorkbook.Sheets("TransfersData").Unprotect
     On Error GoTo ErrorHandler
+
+    ' Guard A: prevent importing from the workbook that is currently open (self-select).
+    ' Workbooks.Open on the live file just returns the live workbook, which we would
+    ' then force-close further down, killing the user's session.
+    If StrComp(oldPath, ThisWorkbook.FullName, vbTextCompare) = 0 Then
+        MsgBox "You selected the workbook that is currently open. Please choose a " & _
+               "different (older) workbook to import from.", vbExclamation
+        GoTo CleanExit
+    End If
+
+    ' Guard B: Excel keys open workbooks by BASE filename and ignores the folder.
+    ' If a workbook with the same base name is already open (even from a different
+    ' folder), Workbooks.Open raises run-time error 1004. Detect and bail out cleanly.
+    oldFileName = Mid$(oldPath, InStrRev(oldPath, "\") + 1)
+    On Error Resume Next
+    Set wbCheck = Application.Workbooks(oldFileName)
+    On Error GoTo ErrorHandler
+    If Not wbCheck Is Nothing Then
+        MsgBox "A workbook named '" & oldFileName & "' is already open. Excel can't " & _
+               "open two files with the same name. Close it (or make a renamed copy " & _
+               "of the file you want to import) and try again.", vbExclamation
+        GoTo CleanExit
+    End If
 
     ' Open old workbook
     Dim oldWB As Workbook
@@ -749,7 +850,15 @@ Public Sub ImportFromOldWorkbook()
     Dim newWS As Worksheet
     Set newWS = ThisWorkbook.Sheets("DailyData")
     Dim newTbl As ListObject
+    On Error Resume Next
     Set newTbl = newWS.ListObjects("tblDaily")
+    On Error GoTo ErrorHandler
+    If newTbl Is Nothing Then
+        MsgBox "This workbook is missing tblDaily - rebuild required.", vbExclamation
+        oldWB.Close SaveChanges:=False
+        Set oldWB = Nothing
+        GoTo CleanExit
+    End If
 
     Dim importCount As Long
     importCount = 0
@@ -772,8 +881,16 @@ Public Sub ImportFromOldWorkbook()
 
     If Not oldConfigTbl Is Nothing Then
         Dim newConfigTbl As ListObject
+        On Error Resume Next
         Set newConfigTbl = ThisWorkbook.Sheets("Control").ListObjects("tblWardConfig")
-        
+        On Error GoTo ErrorHandler
+        If newConfigTbl Is Nothing Then
+            MsgBox "This workbook is missing tblWardConfig - rebuild required.", vbExclamation
+            oldWB.Close SaveChanges:=False
+            Set oldWB = Nothing
+            GoTo CleanExit
+        End If
+
         Dim r As Long
         For r = 1 To newConfigTbl.ListRows.Count
             Dim wCode As String
@@ -800,6 +917,16 @@ Public Sub ImportFromOldWorkbook()
     ' ── BULK IMPORT: Read old data into array, write in one shot ──
     ' Reading/writing cell-by-cell and calling ListRows.Add per row is
     ' extremely slow (~30 min for 860 rows). Array-based bulk copy is instant.
+
+    ' Validate the old table is wide enough to hold the 9 input columns we read.
+    ' Older/incompatible layouts would otherwise raise a subscript error mid-read.
+    If oldTbl.ListColumns.Count < 9 Then
+        MsgBox "The selected workbook's daily table has an older/incompatible " & _
+               "layout and cannot be imported.", vbExclamation
+        oldWB.Close SaveChanges:=False
+        Set oldWB = Nothing
+        GoTo CleanExit
+    End If
 
     Dim oldRowCount As Long
     oldRowCount = oldTbl.ListRows.Count
@@ -984,8 +1111,28 @@ Public Sub ImportFromOldWorkbook()
     MsgBox msg, vbInformation, "Import Complete"
     Exit Sub
 
+CleanExit:
+    ' Clean abort path (validation/guard failures). Restores app state and
+    ' re-protects WITHOUT touching oldWB (callers handle/close oldWB themselves).
+    On Error Resume Next
+    ThisWorkbook.Sheets("DailyData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("Admissions").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("DeathsData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("TransfersData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    On Error GoTo 0
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Exit Sub
+
 ErrorHandler:
     ' Re-protect data sheets on error
+    Dim savedErrNum As Long
+    Dim savedErrDesc As String
+    savedErrNum = Err.Number
+    savedErrDesc = Err.Description
+
     On Error Resume Next
     ThisWorkbook.Sheets("DailyData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
     ThisWorkbook.Sheets("Admissions").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
@@ -1001,8 +1148,8 @@ ErrorHandler:
         oldWB.Close SaveChanges:=False
     End If
 
-    MsgBox "Error during import: " & Err.Description & vbCrLf & vbCrLf & _
-           "Import cancelled.", vbExclamation, "Import Error"
+    MsgBox "Error during import (#" & savedErrNum & "): " & savedErrDesc & vbCrLf & vbCrLf & _
+           "Import cancelled. No data was changed.", vbExclamation, "Import Error"
 End Sub
 
 '===================================================================
@@ -1273,8 +1420,281 @@ Public Sub SaveDeath(deathDate As Variant, wardCode As String, _
 End Sub
 
 Public Sub AutoSaveWorkbook()
-    On Error Resume Next
+    ' Persist the workbook to disk. Previously this swallowed ALL errors with
+    ' "On Error Resume Next", so if the save failed (file locked, read-only,
+    ' OneDrive sync, etc.) the data lived only in memory and was lost on close -
+    ' i.e. entries that "don't actually save". Now failures are surfaced.
+    On Error GoTo SaveFailed
+    Application.ScreenUpdating = False
     ThisWorkbook.Save
+    Application.ScreenUpdating = True
+    Exit Sub
+
+SaveFailed:
+    Application.ScreenUpdating = True
+    MsgBox "WARNING: The workbook could NOT be saved to disk." & vbCrLf & vbCrLf & _
+           "Your last entry is in memory but not yet saved. " & _
+           "Close any other program that has this file open, make sure the file " & _
+           "is not read-only, then save manually (Ctrl+S)." & vbCrLf & vbCrLf & _
+           "Details: " & Err.Description, vbExclamation, "Save Failed"
+End Sub
+
+'===================================================================
+' RESTORE APPLICATION STATE
+'===================================================================
+Public Sub RestoreAppState()
+    ' Force Excel back to its normal interactive state. Routines that turn off
+    ' ScreenUpdating/EnableEvents and switch Calculation to manual MUST restore
+    ' these even when they error mid-way; otherwise the whole session is left
+    ' frozen (UI "hangs", edits don't visibly recalc/persist). Forms also call
+    ' this on open as a self-healing safety net.
+    On Error Resume Next
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+End Sub
+
+'===================================================================
+' DATA INTEGRITY HEALING (safe to call on every workbook open)
+'===================================================================
+Public Sub NormalizeDataIntegrity()
+    ' Idempotent, fast, SAFE self-healing pass. When a user types rows directly
+    ' into the data sheets, the auto-generated ID columns and the daily remaining
+    ' calc are left blank; this fills them so nothing downstream fails.
+    '   - tblAdmissions: assign missing AdmissionIDs (prefix "A")
+    '   - tblDeaths:     assign missing DeathIDs     (prefix "D")
+    '   - tblDaily:      fill missing Month + recalc PrevRemaining/Remaining
+    ' Never raises (guarded throughout); shows no success message.
+    On Error GoTo CleanFail
+
+    Application.ScreenUpdating = False
+    Application.EnableEvents = False
+    Application.Calculation = xlCalculationManual
+
+    ' Unprotect data sheets so we can write
+    On Error Resume Next
+    ThisWorkbook.Sheets("DailyData").Unprotect
+    ThisWorkbook.Sheets("Admissions").Unprotect
+    ThisWorkbook.Sheets("DeathsData").Unprotect
+    ThisWorkbook.Sheets("TransfersData").Unprotect
+    On Error GoTo CleanFail
+
+    ' ── tblAdmissions: heal missing AdmissionIDs ──
+    NormalizeIDColumn ThisWorkbook.Sheets("Admissions"), "tblAdmissions", _
+                      COL_ADM_ID, "A", COL_ADM_DATE, COL_ADM_PATIENT_NAME
+
+    ' ── tblDeaths: heal missing DeathIDs ──
+    NormalizeIDColumn ThisWorkbook.Sheets("DeathsData"), "tblDeaths", _
+                      COL_DEATH_ID, "D", COL_DEATH_DATE, COL_DEATH_NAME
+
+    ' ── tblDaily: fill Month + recalc remaining (running-total method) ──
+    NormalizeDailyTable
+
+    ' Re-protect
+    On Error Resume Next
+    ThisWorkbook.Sheets("DailyData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("Admissions").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("DeathsData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("TransfersData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    On Error GoTo 0
+
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    Exit Sub
+
+CleanFail:
+    ' Re-protect (best effort) and restore app state - never crash the open.
+    On Error Resume Next
+    ThisWorkbook.Sheets("DailyData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("Admissions").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("DeathsData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    ThisWorkbook.Sheets("TransfersData").Protect Password:="", UserInterfaceOnly:=True, DrawingObjects:=False, Contents:=True, Scenarios:=False
+    Application.Calculation = xlCalculationAutomatic
+    Application.ScreenUpdating = True
+    Application.EnableEvents = True
+    On Error GoTo 0
+End Sub
+
+Private Sub NormalizeIDColumn(ws As Worksheet, tableName As String, _
+    idCol As Integer, prefix As String, dateCol As Integer, nameCol As Integer)
+    ' Assign IDs to any row missing one BUT carrying real data (non-empty date or
+    ' name). Uses the SAME format as GenerateNextID: prefix & YYYY & "-" & #####.
+    ' A running max (seeded from existing IDs in the table) guarantees sequential,
+    ' non-colliding IDs in a single pass - matching GenerateNextID's logic without
+    ' re-scanning the live table per row (so it never double-assigns).
+    On Error GoTo SafeExit
+
+    Dim tbl As ListObject
+    On Error Resume Next
+    Set tbl = ws.ListObjects(tableName)
+    On Error GoTo SafeExit
+    If tbl Is Nothing Then Exit Sub
+    If tbl.ListRows.Count = 0 Then Exit Sub
+
+    Dim yr As Long
+    yr = GetReportYear()
+    Dim idPrefix As String
+    idPrefix = prefix & yr & "-"
+
+    Dim n As Long
+    n = tbl.ListRows.Count
+
+    ' Single-row tables: DataBodyRange.Value is not a 2-D array. Handle directly.
+    If n = 1 Then
+        Dim curID1 As String, hasData1 As Boolean
+        curID1 = CStr(tbl.ListRows(1).Range(1, idCol).Value)
+        hasData1 = RowHasData(tbl.ListRows(1).Range(1, dateCol).Value, _
+                              tbl.ListRows(1).Range(1, nameCol).Value)
+        If curID1 = "" And hasData1 Then
+            tbl.ListRows(1).Range(1, idCol).Value = idPrefix & Format(1, "00000")
+        End If
+        Exit Sub
+    End If
+
+    Dim d As Variant
+    d = tbl.DataBodyRange.Value
+
+    ' Pass 1: find the running max number already used for this prefix/year.
+    Dim maxNum As Long
+    maxNum = 0
+    Dim i As Long, idStr As String, dashPos As Long, numPart As Long
+    For i = 1 To UBound(d, 1)
+        idStr = CStr(d(i, idCol))
+        If Len(idStr) > Len(idPrefix) Then
+            If Left$(idStr, Len(idPrefix)) = idPrefix Then
+                dashPos = InStr(idStr, "-")
+                If dashPos > 0 Then
+                    On Error Resume Next
+                    numPart = CLng(Mid$(idStr, dashPos + 1))
+                    If Err.Number = 0 And numPart > maxNum Then maxNum = numPart
+                    On Error GoTo SafeExit
+                End If
+            End If
+        End If
+    Next i
+
+    ' Pass 2: assign IDs to blank rows that carry real data.
+    Dim changed As Boolean
+    changed = False
+    For i = 1 To UBound(d, 1)
+        idStr = CStr(d(i, idCol))
+        If idStr = "" Then
+            If RowHasData(d(i, dateCol), d(i, nameCol)) Then
+                maxNum = maxNum + 1
+                d(i, idCol) = idPrefix & Format(maxNum, "00000")
+                changed = True
+            End If
+        End If
+    Next i
+
+    If changed Then
+        tbl.DataBodyRange.Value = d
+    End If
+    Exit Sub
+
+SafeExit:
+End Sub
+
+Private Function RowHasData(dateVal As Variant, nameVal As Variant) As Boolean
+    ' "Real data" = a non-empty date OR a non-empty name cell.
+    RowHasData = False
+    On Error Resume Next
+    If Not IsEmpty(dateVal) Then
+        If Trim$(CStr(dateVal)) <> "" Then RowHasData = True
+    End If
+    If Not RowHasData Then
+        If Not IsEmpty(nameVal) Then
+            If Trim$(CStr(nameVal)) <> "" Then RowHasData = True
+        End If
+    End If
+End Function
+
+Private Sub NormalizeDailyTable()
+    ' Fill any empty Month from EntryDate, then recalc PrevRemaining/Remaining for
+    ' ALL rows using the proven running-total method (sort first, carry lastRem per
+    ' ward starting from GetPrevYearRemaining). Single array read + single write.
+    On Error GoTo SafeExit
+
+    Dim ws As Worksheet
+    Set ws = ThisWorkbook.Sheets("DailyData")
+    Dim tbl As ListObject
+    On Error Resume Next
+    Set tbl = ws.ListObjects("tblDaily")
+    On Error GoTo SafeExit
+    If tbl Is Nothing Then Exit Sub
+    If tbl.ListRows.Count = 0 Then Exit Sub
+
+    ' Skip empty seed-only table
+    If tbl.ListRows.Count = 1 Then
+        If IsEmpty(tbl.ListRows(1).Range(1, COL_DAILY_ENTRY_DATE).Value) Then Exit Sub
+    End If
+
+    ' Sort so each ward's rows are contiguous and date-ordered.
+    SortDailyTable
+
+    Dim calcRows As Long
+    calcRows = tbl.ListRows.Count
+    If calcRows < 1 Then Exit Sub
+
+    ' Single-row real-data table: handle directly (no 2-D array).
+    If calcRows = 1 Then
+        Dim r1Date As Variant
+        r1Date = tbl.ListRows(1).Range(1, COL_DAILY_ENTRY_DATE).Value
+        If IsDate(r1Date) Then
+            If IsEmpty(tbl.ListRows(1).Range(1, COL_DAILY_MONTH).Value) Or _
+               tbl.ListRows(1).Range(1, COL_DAILY_MONTH).Value = "" Then
+                tbl.ListRows(1).Range(1, COL_DAILY_MONTH).Value = Month(CDate(r1Date))
+            End If
+            CalculateRemainingForRow tbl.ListRows(1)
+        End If
+        Exit Sub
+    End If
+
+    Dim calcData As Variant
+    calcData = tbl.DataBodyRange.Value
+
+    Dim lastCalcWard As String
+    Dim lastCalcRem As Long
+    lastCalcWard = Chr$(0)  ' impossible ward sentinel so first real ward resets
+
+    Dim j As Long
+    For j = 1 To UBound(calcData, 1)
+        If Not IsEmpty(calcData(j, COL_DAILY_ENTRY_DATE)) Then
+            If IsDate(calcData(j, COL_DAILY_ENTRY_DATE)) Then
+                ' Fill empty Month from EntryDate (numeric month, matching SaveDailyEntry)
+                If IsEmpty(calcData(j, COL_DAILY_MONTH)) Or _
+                   CStr(calcData(j, COL_DAILY_MONTH)) = "" Then
+                    calcData(j, COL_DAILY_MONTH) = Month(CDate(calcData(j, COL_DAILY_ENTRY_DATE)))
+                End If
+
+                Dim cWard As String
+                cWard = CStr(calcData(j, COL_DAILY_WARD_CODE))
+                If cWard <> lastCalcWard Then
+                    lastCalcWard = cWard
+                    lastCalcRem = GetPrevYearRemaining(cWard)
+                End If
+
+                Dim cAdm As Long, cDis As Long, cDth As Long
+                Dim cD24 As Long, cTi As Long, cTo As Long
+                cAdm = CLng(Val(calcData(j, COL_DAILY_ADMISSIONS)))
+                cDis = CLng(Val(calcData(j, COL_DAILY_DISCHARGES)))
+                cDth = CLng(Val(calcData(j, COL_DAILY_DEATHS)))
+                cD24 = CLng(Val(calcData(j, COL_DAILY_DEATHS_U24)))
+                cTi = CLng(Val(calcData(j, COL_DAILY_TRANSFERS_IN)))
+                cTo = CLng(Val(calcData(j, COL_DAILY_TRANSFERS_OUT)))
+
+                calcData(j, COL_DAILY_PREV_REMAINING) = lastCalcRem
+                lastCalcRem = lastCalcRem + cAdm + cTi - cDis - cDth - cTo - cD24
+                calcData(j, COL_DAILY_REMAINING) = lastCalcRem
+            End If
+        End If
+    Next j
+
+    tbl.DataBodyRange.Value = calcData
+    Exit Sub
+
+SafeExit:
 End Sub
 
 Public Sub ToggleDataProtection()

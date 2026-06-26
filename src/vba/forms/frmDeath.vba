@@ -5,6 +5,10 @@ Private wardNames As Variant
 Private editingRowIndex As Long  ' 0 = new entry, >0 = editing specific row
 
 Private Sub UserForm_Initialize()
+    ' Self-heal: if a previous operation left Excel frozen (ScreenUpdating /
+    ' EnableEvents off, Calculation manual), restore it so this form is responsive
+    ' and saves recalculate/persist normally.
+    RestoreAppState
     editingRowIndex = 0  ' Start in new entry mode
     wardCodes = GetWardCodes()
     wardNames = GetWardNames()
@@ -60,39 +64,73 @@ Private Sub UpdatePendingList()
     Set tblDeaths = ThisWorkbook.Sheets("DeathsData").ListObjects("tblDeaths")
 
     Dim r As Long, rowDate As Date, rowWard As String
-    Dim deathsTotal As Long, deathsEntered As Long
+    Dim reqNormal As Long, reqU24 As Long
+    Dim entNormal As Long, entU24 As Long
+    Dim missNormal As Long, missU24 As Long
+    Dim isRowU24 As Boolean
     Dim dRow As Long
     Dim displayCount As Integer
     Dim monthHasData As Boolean
-    
+
     displayCount = 0
     monthHasData = False
 
-    For r = 1 To tblDay.ListRows.Count
-        If Not IsEmpty(tblDay.ListRows(r).Range(1, 1).Value) Then
+    ' Read both tables once into in-memory arrays (2 COM calls total) rather than
+    ' reading every cell individually inside the nested loop below.
+    Dim dayData As Variant, deathData As Variant
+    Dim dayRows As Long, deathRows As Long
+    If Not tblDay.DataBodyRange Is Nothing Then
+        dayData = tblDay.DataBodyRange.Value
+        dayRows = UBound(dayData, 1)
+    End If
+    If Not tblDeaths.DataBodyRange Is Nothing Then
+        deathData = tblDeaths.DataBodyRange.Value
+        deathRows = UBound(deathData, 1)
+    End If
+
+    For r = 1 To dayRows
+        If Not IsEmpty(dayData(r, COL_DAILY_ENTRY_DATE)) Then
             Dim entryMth As Long
-            entryMth = CLng(tblDay.ListRows(r).Range(1, 2).Value)
-            
+            entryMth = CLng(dayData(r, COL_DAILY_MONTH))
+
             If entryMth = selectedMonth Then
                 monthHasData = True
-                rowDate = CDate(tblDay.ListRows(r).Range(1, 1).Value)
-                rowWard = Trim(CStr(tblDay.ListRows(r).Range(1, 3).Value))
-                deathsTotal = CLng(Val(tblDay.ListRows(r).Range(1, 6).Value)) + CLng(Val(tblDay.ListRows(r).Range(1, 7).Value))
+                rowDate = CDate(dayData(r, COL_DAILY_ENTRY_DATE))
+                rowWard = Trim(CStr(dayData(r, COL_DAILY_WARD_CODE)))
+                ' Two separate death categories from the daily entry
+                reqNormal = CLng(Val(dayData(r, COL_DAILY_DEATHS)))
+                reqU24 = CLng(Val(dayData(r, COL_DAILY_DEATHS_U24)))
 
-                If deathsTotal > 0 Then
-                    ' Count how many entered in tblDeaths
-                    deathsEntered = 0
-                    For dRow = 1 To tblDeaths.ListRows.Count
-                        If Not IsEmpty(tblDeaths.ListRows(dRow).Range(1, 2).Value) Then
-                            If DateValue(CDate(tblDeaths.ListRows(dRow).Range(1, 2).Value)) = DateValue(rowDate) And _
-                               Trim(CStr(tblDeaths.ListRows(dRow).Range(1, 4).Value)) = rowWard Then
-                                deathsEntered = deathsEntered + 1
+                If (reqNormal + reqU24) > 0 Then
+                    ' Count how many of each category are already entered in tblDeaths
+                    entNormal = 0
+                    entU24 = 0
+                    Dim targetSerial As Long
+                    targetSerial = Int(CDbl(rowDate))
+                    For dRow = 1 To deathRows
+                        If Not IsEmpty(deathData(dRow, COL_DEATH_DATE)) Then
+                            If Int(CDbl(CDate(deathData(dRow, COL_DEATH_DATE)))) = targetSerial And _
+                               Trim(CStr(deathData(dRow, COL_DEATH_WARD_CODE))) = rowWard Then
+                                isRowU24 = (deathData(dRow, COL_DEATH_WITHIN_24HR) = True)
+                                If isRowU24 Then
+                                    entU24 = entU24 + 1
+                                Else
+                                    entNormal = entNormal + 1
+                                End If
                             End If
                         End If
                     Next dRow
 
-                    If deathsEntered < deathsTotal Then
-                        lstRecent.AddItem Format(rowDate, "dd/mm/yyyy") & " | Pending | " & (deathsTotal - deathsEntered) & " missing | " & rowWard
+                    missU24 = reqU24 - entU24
+                    missNormal = reqNormal - entNormal
+
+                    ' Show <24hr pending separately from normal deaths so the user can focus on one group
+                    If missU24 > 0 Then
+                        lstRecent.AddItem Format(rowDate, "dd/mm/yyyy") & " | Pending | " & missU24 & " missing | <24hr | " & rowWard
+                        displayCount = displayCount + 1
+                    End If
+                    If missNormal > 0 Then
+                        lstRecent.AddItem Format(rowDate, "dd/mm/yyyy") & " | Pending | " & missNormal & " missing | Normal | " & rowWard
                         displayCount = displayCount + 1
                     End If
                 End If
@@ -133,9 +171,19 @@ Private Sub lstRecent_Click()
     wardPart = Trim(Mid(selectedItem, thirdPipe + 1))
     
     If namePart = "Pending" Then
+        ' Pending rows now carry a death category and ward:
+        ' "date | Pending | N missing | <24hr|Normal | ward"
+        Dim pendParts() As String
+        pendParts = Split(selectedItem, "|")
+
+        Dim catPart As String, pendIsU24 As Boolean
+        catPart = Trim(pendParts(3))                 ' 4th field = category
+        pendIsU24 = (InStr(catPart, "24") > 0)
+        wardPart = Trim(pendParts(UBound(pendParts))) ' last field = ward
+
         ' Redirect for pending entry
         txtDate.Value = datePart
-        
+
         Dim jWard As Long
         For jWard = 0 To UBound(wardCodes)
             If wardCodes(jWard) = wardPart Then
@@ -143,14 +191,19 @@ Private Sub lstRecent_Click()
                 Exit For
             End If
         Next jWard
-        
+
         editingRowIndex = 0
         txtFolderNum.Value = ""
         txtName.Value = ""
         txtAge.Value = ""
         cmbCause.Value = ""
-        chkWithin24.Value = False
-        lblStatus.Caption = "Ready for new entry (" & wardPart & ")"
+        ' Pre-set the within-24hr flag to match the category the user picked
+        chkWithin24.Value = pendIsU24
+        If pendIsU24 Then
+            lblStatus.Caption = "Ready for <24hr death (" & wardPart & ")"
+        Else
+            lblStatus.Caption = "Ready for normal death (" & wardPart & ")"
+        End If
         txtFolderNum.SetFocus
         Exit Sub
     End If
